@@ -1,4 +1,4 @@
-# RNA-seq Pipeline for Human + Adenovirus Dual-Host Analysis
+# RNA-seq Pipeline for Human + Virus Dual-Host Analysis
 
 Snakemake pipeline for paired-end RNA-seq: quality control, alignment to a
 combined human + pathogen genome, gene quantification, strandedness-aware
@@ -132,8 +132,8 @@ single reference for alignment. You need four files in the project root:
 |------|-------------|--------|
 | Human genome (gzipped FASTA) | `GRCh38.primary_assembly.genome.fa.gz` | [GENCODE](https://www.gencodegenes.org/human/) |
 | Human annotation (gzipped GTF) | `gencode.v49.annotation.gtf.gz` | [GENCODE](https://www.gencodegenes.org/human/) |
-| Pathogen genome (FASTA) | `GCF_006447215.1_ASM644721v1_genomic.fna` | [NCBI](https://www.ncbi.nlm.nih.gov/datasets/) |
-| Pathogen annotation (GTF) | `GCF_006447215.1_ASM644721v1_genomic.gtf` | [NCBI](https://www.ncbi.nlm.nih.gov/datasets/) |
+| Virus genome (FASTA) | `GCF_006447215.1_ASM644721v1_genomic.fna` | [NCBI](https://www.ncbi.nlm.nih.gov/datasets/) |
+| Virus annotation (GTF) | `GCF_006447215.1_ASM644721v1_genomic.gtf` | [NCBI](https://www.ncbi.nlm.nih.gov/datasets/) |
 
 You can auto-download the references (if URLs are set in `config.yaml`):
 
