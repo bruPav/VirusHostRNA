@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 # Sample metadata
 # -----------------------------------------------------------------------------
-# TSV file with columns: Sample, Condition, Control, Exp_group_1, Exp_group_2
+# TSV file with columns: Sample, Condition, Control
 # The "Sample" column must match FASTQ file basenames (without _1.fq.gz / _2.fq.gz).
 # See samples_template.tsv for format details.
 samples_tsv: "samples.tsv"
