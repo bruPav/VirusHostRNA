@@ -1,0 +1,107 @@
+# =============================================================================
+# AdenoGE Pipeline Configuration
+# =============================================================================
+# Edit this file to adapt the pipeline to your data and compute environment.
+# All paths are relative to the project root unless noted otherwise.
+
+# -----------------------------------------------------------------------------
+# Sample metadata
+# -----------------------------------------------------------------------------
+# TSV file with columns: Sample, Condition, Control, Exp_group_1, Exp_group_2
+# The "Sample" column must match FASTQ file basenames (without _1.fq.gz / _2.fq.gz).
+# See samples_template.tsv for format details.
+samples_tsv: "samples.tsv"
+
+# Alternative sample sheet used by standalone HiPathia script (maps readable
+# names to sample IDs). Columns: Sample, Name
+samplesheet_tsv: "Samplesheet.tsv"
+
+# -----------------------------------------------------------------------------
+# Input / output directories
+# -----------------------------------------------------------------------------
+raw_dir: "rawdata"
+trim_dir: "trimmed"
+fastqc_dir: "fastqc"
+multiqc_dir: "multiqc"
+align_dir: "aligned"
+index_dir: "star_index"
+results_dir: "results"
+rseqc_dir: "rseqc"
+counts_dir: "counts"
+refs_dir: "refs"
+logs_dir: "logs"
+
+# -----------------------------------------------------------------------------
+# Reference genomes (human + pathogen)
+# -----------------------------------------------------------------------------
+# Human genome (GRCh38). Provide gzipped files; the pipeline will decompress.
+human_genome_gz: "GRCh38.primary_assembly.genome.fa.gz"
+human_gtf_gz: "gencode.v49.annotation.gtf.gz"
+
+# Pathogen genome (adenovirus by default). Can be .fna or .fa, compressed or not.
+pathogen_genome: "GCF_006447215.1_ASM644721v1_genomic.fna"
+pathogen_gtf: "GCF_006447215.1_ASM644721v1_genomic.gtf"
+
+# Combined annotation used for RSeQC BED generation.
+# By default this points to "combined_genome.gtf", which is produced
+# automatically by the combine_gtf rule. If you have a hand-curated version
+# (e.g. with CDS features converted to exon for better BED12 output), set it
+# here instead — for example: "combined_genome.CDSasExon.gtf"
+combined_gtf_for_bed: "combined_genome.gtf"
+
+# Download URLs for reference files (used by the download_references rule).
+# Set to "" to skip automatic download for a given file.
+human_genome_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_49/GRCh38.primary_assembly.genome.fa.gz"
+human_gtf_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_49/gencode.v49.annotation.gtf.gz"
+pathogen_genome_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/006/447/215/GCF_006447215.1_ASM644721v1/GCF_006447215.1_ASM644721v1_genomic.fna.gz"
+pathogen_gtf_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/006/447/215/GCF_006447215.1_ASM644721v1/GCF_006447215.1_ASM644721v1_genomic.gtf.gz"
+
+# -----------------------------------------------------------------------------
+# FASTQ naming convention
+# -----------------------------------------------------------------------------
+# The pipeline expects paired-end reads named {sample}_1.fq.gz / {sample}_2.fq.gz
+# inside raw_dir. If your files use a different suffix, change these:
+r1_suffix: "_1.fq.gz"
+r2_suffix: "_2.fq.gz"
+
+# -----------------------------------------------------------------------------
+# STAR alignment
+# -----------------------------------------------------------------------------
+# sjdbOverhang = read_length - 1. For 100 bp reads use 99; for 150 bp use 149.
+sjdb_overhang: 99
+
+# -----------------------------------------------------------------------------
+# Resource allocation
+# -----------------------------------------------------------------------------
+# Maximum threads per rule. The actual thread count is capped by the number of
+# cores passed to Snakemake (--cores / -j). Set these to match your machine.
+threads_star_index: 12
+threads_star_align: 8
+threads_fastp: 4
+threads_fastqc: 2
+
+# Memory limits (in MB). STAR is the most memory-hungry step.
+# STAR index generation for GRCh38 + adenovirus needs ~30 GB with default settings.
+# STAR alignment + BAM sorting needs ~8-10 GB per sample.
+mem_mb_star_index: 30000
+mem_mb_star_align: 8000
+
+# Sparse suffix array density for STAR genome generation.
+# Default (1) uses ~32 GB RAM for GRCh38; set to 2 to halve memory (~16 GB)
+# at a minor alignment speed cost. Use 2 if you have <= 32 GB total RAM.
+star_genome_sa_sparse_d: 2
+
+# -----------------------------------------------------------------------------
+# DESeq2
+# -----------------------------------------------------------------------------
+# Significance threshold for filtering DE genes
+deseq2_padj: 0.05
+
+# -----------------------------------------------------------------------------
+# Enrichment analysis (clusterProfiler)
+# -----------------------------------------------------------------------------
+# KEGG organism code (hsa = Homo sapiens)
+kegg_organism: "hsa"
+# p-value / q-value cutoffs for ORA and GSEA
+enrichment_pvalue: 0.2
+enrichment_qvalue: 0.2

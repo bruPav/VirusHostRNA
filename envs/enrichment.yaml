@@ -1,0 +1,16 @@
+# Conda environment for pathway/GO enrichment (clusterProfiler).
+# Used by Snakefile rule enrichment_analysis (runs after DESeq2 human).
+# Create:  conda env create -f envs/enrichment.yaml
+# Standalone: conda activate enrichment && Rscript scripts/enrichment_analysis_standalone.R
+name: enrichment
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - r-base=4.4
+  - r-biocmanager
+  - r-ggplot2
+  # clusterProfiler + human annotation (conda pulls in DOSE, enrichplot, etc.)
+  - bioconductor-clusterprofiler
+  - bioconductor-org.hs.eg.db

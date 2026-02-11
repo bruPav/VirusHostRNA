@@ -1,0 +1,23 @@
+# Main pipeline env (mapping, counts, DESeq2). Enrichment uses envs/enrichment.yaml.
+name: ge_analysis
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - fastp=0.23.4
+  - fastqc=0.12.1
+  - multiqc=1.18
+  - star=2.7.11b
+  - samtools=1.19
+  - rseqc=5.0.4
+  - r-base>=4.3
+  - bioconductor-deseq2
+  - bioconductor-vsn
+  - bioconductor-biomart
+  - r-ggplot2
+  - r-pheatmap
+  - r-ggrepel
+  - r-biocmanager
+

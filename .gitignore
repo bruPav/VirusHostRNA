@@ -1,0 +1,49 @@
+# =============================================================================
+# AdenoGE .gitignore
+# =============================================================================
+
+# --- Reference genomes (large, downloadable via: snakemake download_references) ---
+*.fa
+*.fa.gz
+*.fna
+*.fna.gz
+*.gtf
+*.gtf.gz
+# Exception: keep the small pathogen GTF/genome filenames in config as reference,
+# but the actual genome files are downloaded by users.
+
+# --- Raw sequencing data (user-specific, too large for git) ---
+rawdata/
+
+# --- All pipeline-generated output directories ---
+trimmed/
+fastqc/
+multiqc/
+aligned/
+star_index/
+counts/
+results/
+rseqc/
+refs/
+logs/
+
+# --- Snakemake internal files ---
+.snakemake/
+snakemakelog
+
+# --- Miscellaneous output / ad-hoc files ---
+human_viral_counts.ods
+viral_deseq2_1h_vs_3h.R
+envs/Untitled
+
+# --- User-specific sample metadata (template is tracked instead) ---
+samples.tsv
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.vscode/
+.idea/

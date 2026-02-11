@@ -1,0 +1,32 @@
+# Conda environment for HiPathia pathway analysis.
+# R 4.4.x so Bioconductor 3.19/3.20 is used (hipathia not on Bioc 3.22).
+# Key deps installed via conda to avoid nloptr/lme4/ggpubr and Bioc build failures.
+# After creating the env:
+#   conda activate hipathia
+#   R -e 'BiocManager::install("hipathia")'
+name: hipathia
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - r-base=4.4
+  - r-biocmanager
+  - nlopt
+  # CRAN deps (avoid source build)
+  - r-png
+  - r-ggpubr
+  - r-lme4
+  # hipathia deps that need C libs (httpuv needs zlib); pre-built avoids compilation
+  - r-httpuv
+  - r-servr
+  - zlib
+  # Bioconductor deps (avoid order/build issues)
+  - bioconductor-genomicranges
+  - bioconductor-delayedarray
+  - bioconductor-summarizedexperiment
+  - bioconductor-biostrings
+  - bioconductor-annotationhub
+  - bioconductor-multiassayexperiment
+  - bioconductor-keggrest
+  - bioconductor-annotationdbi

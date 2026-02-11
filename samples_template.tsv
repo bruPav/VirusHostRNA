@@ -1,0 +1,13 @@
+Sample	Condition	Control
+SampleA_rep1	CellLine1_mock	Negative
+SampleA_rep2	CellLine1_mock	Negative
+SampleB_rep1	CellLine1_treated_1h	Experiment
+SampleB_rep2	CellLine1_treated_1h	Experiment
+SampleC_rep1	CellLine1_treated_3h	Experiment
+SampleC_rep2	CellLine1_treated_3h	Experiment
+SampleD_rep1	CellLine2_mock	Negative
+SampleD_rep2	CellLine2_mock	Negative
+SampleE_rep1	CellLine2_treated_1h	Experiment
+SampleE_rep2	CellLine2_treated_1h	Experiment
+SampleF_rep1	CellLine2_treated_3h	Experiment
+SampleF_rep2	CellLine2_treated_3h	Experiment
