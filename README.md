@@ -58,7 +58,7 @@ conda activate snakemake   # or 'base' if you installed there
 
 ```bash
 # 1. Clone / copy the project
-git clone https://github.com/bruPav/VirusHostRNA.git AdenoGE && cd AdenoGE
+git clone https://github.com/bruPav/VirusHostRNA.git && cd VirusHostRNA
 
 # 2. Activate your Snakemake environment
 conda activate snakemake
