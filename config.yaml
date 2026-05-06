@@ -60,6 +60,11 @@ pathogen_gtf_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/006/447/215/GCF_
 r1_suffix: "_1.fq.gz"
 r2_suffix: "_2.fq.gz"
 
+# Library type: "PE" for paired-end, "SE" for single-end
+library_type: "PE"
+# Suffix for single-end reads (only used when library_type is "SE")
+se_suffix: ".fq.gz"
+
 # -----------------------------------------------------------------------------
 # STAR alignment
 # -----------------------------------------------------------------------------
@@ -92,6 +97,25 @@ star_genome_sa_sparse_d: 2
 # -----------------------------------------------------------------------------
 # Significance threshold for filtering DE genes
 deseq2_padj: 0.05
+
+# Optional: override auto-detected design formula (R formula syntax).
+# Leave empty to auto-detect from metadata columns (Control or Condition).
+# Examples:
+#   ~ Condition                     (simple 1-factor)
+#   ~ Batch + Condition             (batch-corrected)
+#   ~ Batch + Condition + Batch:Condition  (with interaction)
+design_formula: ""
+
+# Optional: specify the exact contrast for results extraction.
+# Format: [variable, treated_level, reference_level]
+# Leave empty to auto-detect from Control/Negative/Experiment columns.
+# Example: ["Condition", "Treated", "Control"]
+deseq2_contrast: []
+
+# Pre-filter low-count genes before DESeq2 (standard practice).
+# Keep genes with >= min_count reads in >= min_samples samples.
+min_count: 10
+min_samples: 3
 
 # Chromosome/accession prefixes that identify pathogen genes in count matrices.
 # Used by separate_viral_counts as a fallback beyond GTF gene_id matching.

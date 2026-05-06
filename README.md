@@ -99,18 +99,24 @@ defined in `envs/`.
 
 ### 1. FASTQ reads
 
-Place paired-end FASTQ files in `rawdata/` (or the directory set by
-`raw_dir` in `config.yaml`). Files must follow this naming convention:
+Place FASTQ files in `rawdata/` (or the directory set by `raw_dir` in
+`config.yaml`).
 
+**Paired-end** (default):
 ```
 rawdata/{sample}_1.fq.gz
 rawdata/{sample}_2.fq.gz
 ```
 
-> **Tip:** If your facility delivers files as `_R1_001.fastq.gz`, rename or
-> symlink them, or change `r1_suffix` / `r2_suffix` in `config.yaml`.
+**Single-end** (set `library_type: "SE"` in config):
+```
+rawdata/{sample}.fq.gz
+```
 
-Samples are **auto-detected** from filenames -- no need to list them manually.
+> **Tip:** If your facility delivers files as `_R1_001.fastq.gz`, rename or
+> symlink them, or change `r1_suffix` / `r2_suffix` / `se_suffix` in `config.yaml`.
+
+Samples are **auto-detected** from filenames — no need to list them manually.
 
 ### 2. Sample metadata (`samples.tsv`)
 
@@ -161,6 +167,13 @@ All tuneable parameters live in **`config.yaml`**:
 # Sample sheet
 samples_tsv: "samples.tsv"
 
+# Library type: "PE" (paired-end) or "SE" (single-end)
+library_type: "PE"
+# FASTQ suffixes (r1/r2 for PE, se_suffix for SE)
+r1_suffix: "_1.fq.gz"
+r2_suffix: "_2.fq.gz"
+se_suffix: ".fq.gz"
+
 # Thread limits (capped by --cores at runtime)
 threads_star_index: 12
 threads_star_align: 8
@@ -177,8 +190,12 @@ star_genome_sa_sparse_d: 2
 mem_mb_star_index: 30000
 mem_mb_star_align: 8000
 
-# DESeq2 significance threshold for filtering DE genes
-deseq2_padj: 0.05
+# DESeq2
+deseq2_padj: 0.05           # significance threshold for DE genes
+design_formula: ""          # optional: R formula (e.g. ~ Batch + Condition)
+deseq2_contrast: []         # optional: [variable, treated, reference]
+min_count: 10               # keep genes with >= N reads
+min_samples: 3              # in at least N samples
 
 # Enrichment analysis (clusterProfiler)
 enrichment_pvalue: 0.2       # p-value cutoff for ORA and GSEA
@@ -186,9 +203,6 @@ enrichment_qvalue: 0.2       # q-value cutoff for ORA and GSEA
 kegg_organism: "hsa"         # KEGG organism code
 
 # Pathogen chromosome prefixes for viral gene identification.
-# Used as a fallback by separate_viral_counts beyond GTF gene_id matching.
-# Set to prefixes matching your pathogen (e.g. ["NC_"] for RefSeq organisms,
-# ["NC_075498"] for the default adenovirus).
 pathogen_gene_prefixes: ["NC_075498"]
 
 # Reference file names, download URLs, FASTQ suffixes, etc.
@@ -300,12 +314,48 @@ The first run will take longer while environments are solved and installed.
 
 ---
 
+## Running on a SLURM Cluster
+
+A pre-configured SLURM profile is included in `profiles/slurm/`. Edit
+`profiles/slurm/config.yaml` to match your cluster (partition name, memory
+formats, time limits).
+
+```bash
+# 1. Edit profiles/slurm/config.yaml for your cluster
+# 2. Make the launcher executable
+chmod +x run_slurm.sh
+# 3. Submit
+./run_slurm.sh
+```
+
+Or run directly:
+
+```bash
+snakemake --profile profiles/slurm --use-conda --jobs 50
+```
+
+Adjust `--jobs` to your cluster's concurrent job limit. Job logs appear in
+`logs/slurm/`.
+
+---
+
 ## Troubleshooting
 
 **STAR runs out of memory during indexing:**
 Set `star_genome_sa_sparse_d: 2` in `config.yaml` (halves memory) or reduce
 `threads_star_index`. You can also constrain memory with
 `--resources mem_mb=32000`.
+
+**"Pre-flight validation failed":**
+The pipeline validates inputs before any rule runs. Common causes:
+- Missing reference files (run `snakemake download_references --cores 1`)
+- Samples in FASTQ but missing from `samples.tsv` (or vice versa)
+- `library_type` is "SE" but files don't match `se_suffix` pattern
+- A column referenced in `design_formula` doesn't exist in `samples.tsv`
+
+**Wrong design formula / contrast:**
+Set `design_formula` and `deseq2_contrast` in config to override auto-detection.
+The pipeline falls back to `Control`/`Condition` columns if they're left empty.
 
 **biomaRt connection fails:**
 DESeq2 maps Ensembl IDs to gene symbols via biomaRt (internet required).
@@ -330,15 +380,19 @@ Remove the marker files: `rm .snakemake/incomplete/*` and re-run.
 ## Directory Structure
 
 ```
-AdenoGE/
+VirusHostRNA/
 ├── Snakefile                 # Main pipeline definition
 ├── config.yaml               # All tuneable parameters
+├── run_slurm.sh              # SLURM cluster launcher
 ├── samples.tsv               # Your sample metadata (create this!)
 ├── samples_template.tsv      # Template with example entries
 ├── envs/                     # Conda environment definitions
 │   ├── ge_analysis.yaml
 │   ├── enrichment.yaml
 │   └── hipathia.yaml
+├── profiles/                 # Cluster execution profiles
+│   └── slurm/
+│       └── config.yaml       # SLURM resource mapping
 ├── scripts/                  # R and Python analysis scripts
 │   ├── deseq2_analysis.R
 │   ├── deseq2_analysis_viral.R

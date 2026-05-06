@@ -1,0 +1,41 @@
+# Snakemake SLURM cluster profile
+# Usage: snakemake --profile profiles/slurm --use-conda
+
+# Cluster submission command
+cluster:
+  mkdir -p logs/slurm &&
+  sbatch
+    --parsable
+    --cpus-per-task={resources.threads}
+    --mem={resources.mem_mb}
+    --time={resources.runtime}
+    --job-name=smk-{rule}-{wildcards}
+    --output=logs/slurm/{rule}-{wildcards}-%j.out
+    --error=logs/slurm/{rule}-{wildcards}-%j.err
+    --partition={resources.partition}
+
+# Default resources assigned to every job unless overridden by the rule
+default-resources:
+  - threads=1
+  - mem_mb=4000
+  - runtime="04:00:00"
+  - partition="main"
+
+# Maximum jobs to submit in parallel (adjust to your cluster limits)
+jobs: 50
+
+# Seconds to wait for output files to appear after a job completes
+latency-wait: 60
+
+# Automatically retry failed jobs (useful for transient cluster issues)
+restart-times: 2
+
+# Rate limiting (avoid overwhelming the scheduler)
+max-jobs-per-second: 5
+max-status-checks-per-second: 10
+
+# Use conda environments defined in envs/
+use-conda: true
+
+# Reuse conda environments across runs (speeds up subsequent runs)
+conda-prefix: ~/.snakemake/conda

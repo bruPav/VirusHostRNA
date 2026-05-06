@@ -29,23 +29,44 @@ if (length(common_samples) < nrow(metadata)) {
 counts <- counts[, common_samples, drop=FALSE]
 metadata <- metadata[common_samples, , drop=FALSE]
 
-# 2. Create DESeq2 Dataset with simple design
-# Use Control column if available, otherwise use Condition
-if ("Control" %in% colnames(metadata)) {
-    metadata$Control <- factor(metadata$Control)
-    if ("Negative" %in% levels(metadata$Control)) {
-        metadata$Control <- relevel(metadata$Control, ref = "Negative")
+# 2. Create DESeq2 Dataset
+# Use explicit design formula from config, or auto-detect from metadata columns
+design_str <- snakemake@config[["design_formula"]]
+if (!is.null(design_str) && nchar(design_str) > 0) {
+    design_formula <- as.formula(design_str)
+    for (col in all.vars(design_formula)) {
+        if (col %in% colnames(metadata)) {
+            metadata[[col]] <- factor(metadata[[col]])
+        } else {
+            stop(paste("Design formula references column", col, "not found in metadata"))
+        }
     }
-    design_formula <- ~ Control
-} else if ("Condition" %in% colnames(metadata)) {
-    metadata$Condition <- factor(metadata$Condition)
-    design_formula <- ~ Condition
 } else {
-    stop("Metadata must contain either 'Control' or 'Condition' column.")
+    # Auto-detect from Control/Condition column
+    if ("Control" %in% colnames(metadata)) {
+        metadata$Control <- factor(metadata$Control)
+        if ("Negative" %in% levels(metadata$Control)) {
+            metadata$Control <- relevel(metadata$Control, ref = "Negative")
+        }
+        design_formula <- ~ Control
+    } else if ("Condition" %in% colnames(metadata)) {
+        metadata$Condition <- factor(metadata$Condition)
+        design_formula <- ~ Condition
+    } else {
+        stop("Metadata must contain either 'Control' or 'Condition' column, or set design_formula in config")
+    }
 }
 
 condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
 padj_threshold <- if (is.null(snakemake@config[["deseq2_padj"]])) 0.05 else as.numeric(snakemake@config[["deseq2_padj"]])
+
+# 3. Pre-filter low-count genes
+min_count <- if (is.null(snakemake@config[["min_count"]])) 10 else as.numeric(snakemake@config[["min_count"]])
+min_samples <- if (is.null(snakemake@config[["min_samples"]])) min(3, ncol(counts)) else as.numeric(snakemake@config[["min_samples"]])
+keep <- rowSums(counts >= min_count) >= min_samples
+message(paste("Pre-filtering: kept", sum(keep), "of", nrow(counts), "genes",
+              "(min", min_count, "counts in", min_samples, "samples)"))
+counts <- counts[keep, , drop = FALSE]
 
 dds <- DESeqDataSetFromMatrix(countData = round(counts),
                               colData = metadata,
@@ -53,9 +74,12 @@ dds <- DESeqDataSetFromMatrix(countData = round(counts),
 
 dds <- DESeq(dds)
 
-# 3. Extract Results
-if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
-    res <- results(dds, contrast=c("Control", "Experiment", "Negative"))
+# 4. Extract Results
+contrast_cfg <- snakemake@config[["deseq2_contrast"]]
+if (!is.null(contrast_cfg) && length(contrast_cfg) == 3) {
+    res <- results(dds, contrast = contrast_cfg)
+} else if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
+    res <- results(dds, contrast = c("Control", "Experiment", "Negative"))
 } else {
     res <- results(dds)
 }

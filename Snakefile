@@ -48,18 +48,31 @@ GENES_BED       = os.path.join(REFS_DIR, "genes.bed")
 R1_SUFFIX = config.get("r1_suffix", "_1.fq.gz")
 R2_SUFFIX = config.get("r2_suffix", "_2.fq.gz")
 
+LIBRARY_TYPE = config.get("library_type", "PE")
+IS_PAIRED    = LIBRARY_TYPE == "PE"
+SE_SUFFIX    = config.get("se_suffix", ".fq.gz")
+
 # --- Samples (auto-detected from raw_dir) ------------------------------------
-SAMPLES = sorted(
-    set(
-        os.path.basename(f).replace(R1_SUFFIX, "")
-        for f in glob.glob(os.path.join(RAW_DIR, f"*{R1_SUFFIX}"))
+if IS_PAIRED:
+    SAMPLES = sorted(
+        set(
+            os.path.basename(f).replace(R1_SUFFIX, "")
+            for f in glob.glob(os.path.join(RAW_DIR, f"*{R1_SUFFIX}"))
+        )
     )
-)
+else:
+    SAMPLES = sorted(
+        set(
+            os.path.basename(f).replace(SE_SUFFIX, "")
+            for f in glob.glob(os.path.join(RAW_DIR, f"*{SE_SUFFIX}"))
+        )
+    )
 
 if not SAMPLES:
+    suffix = R1_SUFFIX if IS_PAIRED else SE_SUFFIX
     raise SystemExit(
-        f"ERROR: No FASTQ files found in '{RAW_DIR}' matching '*{R1_SUFFIX}'.\n"
-        "Place paired-end reads there and re-run."
+        f"ERROR: No FASTQ files found in '{RAW_DIR}' matching '*{suffix}'.\n"
+        f"Place your {'paired-end' if IS_PAIRED else 'single-end'} reads there and re-run."
     )
 
 # --- Sample metadata ----------------------------------------------------------
@@ -82,54 +95,162 @@ MEM_MB_STAR_ALIGN = config.get("mem_mb_star_align", 8000)
 STAR_SA_SPARSE_D = config.get("star_genome_sa_sparse_d", 2)
 
 # =============================================================================
+# Pre-flight validation — catch misconfigurations before any rule runs
+# =============================================================================
+def _validate_config():
+    """Check config, input files, and metadata for common errors."""
+    errors = []
+
+    # --- Library type ---
+    lib_type = config.get("library_type", "PE")
+    if lib_type not in ("PE", "SE"):
+        errors.append(f"library_type must be 'PE' or 'SE', got '{lib_type}'.")
+    if lib_type == "SE" and not config.get("se_suffix"):
+        errors.append("se_suffix must be set when library_type is 'SE'.")
+
+    # --- Integer configs must be positive ---
+    for key in ["threads_star_index", "threads_star_align", "threads_fastp",
+                "threads_fastqc", "mem_mb_star_index", "mem_mb_star_align",
+                "sjdb_overhang"]:
+        v = config.get(key)
+        if v is not None and (not isinstance(v, (int, float)) or v <= 0):
+            errors.append(f"{key} must be a positive number, got {v}.")
+
+    # --- pathogen_gene_prefixes must be a list ---
+    pfx = config.get("pathogen_gene_prefixes")
+    if pfx is not None and not isinstance(pfx, list):
+        errors.append(f"pathogen_gene_prefixes must be a list, got {type(pfx).__name__}.")
+
+    # --- Reference files must exist ---
+    for key, path in [("human_genome_gz", HUMAN_GENOME_GZ),
+                      ("human_gtf_gz",    HUMAN_GTF_GZ),
+                      ("pathogen_genome",  PATHOGEN_GENOME),
+                      ("pathogen_gtf",     PATHOGEN_GTF)]:
+        if not os.path.isfile(path):
+            errors.append(
+                f"Reference file '{path}' ({key}) not found.\n"
+                f"  Place it in the project root or run: snakemake download_references --cores 1"
+            )
+
+    # --- Sample metadata ---
+    if not os.path.isfile(SAMPLES_TSV):
+        errors.append(
+            f"Sample metadata file '{SAMPLES_TSV}' not found.\n"
+            f"  Copy samples_template.tsv to {SAMPLES_TSV} and edit it."
+        )
+    else:
+        with open(SAMPLES_TSV) as f:
+            header = f.readline().strip().split("\t")
+        required_cols = ["Sample"]
+        missing = [c for c in required_cols if c not in header]
+        if missing:
+            errors.append(
+                f"Missing required column(s) {missing} in '{SAMPLES_TSV}'.\n"
+                f"  Expected columns: {required_cols}"
+            )
+        if "Sample" in header:
+            metadata_samples = set()
+            with open(SAMPLES_TSV) as f:
+                next(f)
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if parts:
+                        metadata_samples.add(parts[0])
+            missing_from_meta = set(SAMPLES) - metadata_samples
+            missing_from_data = metadata_samples - set(SAMPLES)
+            if missing_from_meta:
+                errors.append(
+                    f"Samples in FASTQ but not in '{SAMPLES_TSV}': {sorted(missing_from_meta)}"
+                )
+            if missing_from_data:
+                errors.append(
+                    f"Samples in '{SAMPLES_TSV}' but no FASTQ found: {sorted(missing_from_data)}"
+                )
+
+    # --- Output directories should be writable ---
+    for d in [TRIM_DIR, FASTQC_DIR, MULTIQC_DIR, ALIGN_DIR, RESULTS_DIR,
+              RSEQC_DIR, COUNTS_DIR, REFS_DIR, LOGS_DIR]:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError as e:
+            errors.append(f"Cannot create/write to '{d}': {e}")
+
+    if errors:
+        msg = "\n  - ".join(errors)
+        raise SystemExit(
+            f"Pre-flight validation failed with {len(errors)} error(s):\n  - {msg}"
+        )
+
+_validate_config()
+
+# =============================================================================
 # Target rule
 # =============================================================================
+def _rule_all_inputs():
+    """Build the full list of target outputs, conditional on library type."""
+    ins = []
+
+    # Trimmed reads
+    if IS_PAIRED:
+        ins.extend(expand(f"{TRIM_DIR}/{{sample}}_1.trim.fq.gz", sample=SAMPLES))
+    else:
+        ins.extend(expand(f"{TRIM_DIR}/{{sample}}.trim.fq.gz", sample=SAMPLES))
+
+    # FastQC
+    if IS_PAIRED:
+        ins.extend(expand(f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.html", sample=SAMPLES))
+    else:
+        ins.extend(expand(f"{FASTQC_DIR}/{{sample}}.trim_fastqc.html", sample=SAMPLES))
+
+    # Sorted BAMs, BAM indices, and gene counts
+    ins.extend(expand(f"{ALIGN_DIR}/{{sample}}_Aligned.sortedByCoord.out.bam", sample=SAMPLES))
+    ins.extend(expand(f"{ALIGN_DIR}/{{sample}}_BAMIndex.bai", sample=SAMPLES))
+    ins.extend(expand(f"{ALIGN_DIR}/{{sample}}_ReadsPerGene.out.tab", sample=SAMPLES))
+    ins.append(f"{MULTIQC_DIR}/multiqc_report.html")
+    # Strandedness reports
+    ins.extend(expand(f"{RSEQC_DIR}/{{sample}}_infer_experiment.txt", sample=SAMPLES))
+    ins.append(f"{RSEQC_DIR}/strandedness_summary.tsv")
+    ins.append(f"{COUNTS_DIR}/gene_counts_matrix.tsv")
+    ins.append(f"{COUNTS_DIR}/gene_counts_matrix_human.tsv")
+    ins.append(f"{COUNTS_DIR}/gene_counts_matrix_viral.tsv")
+    # Combined DESeq2
+    ins.append(f"{RESULTS_DIR}/deg_results.tsv")
+    ins.append(f"{RESULTS_DIR}/deg_results_significant.tsv")
+    ins.append(f"{RESULTS_DIR}/normalized_counts.tsv")
+    ins.append(f"{RESULTS_DIR}/pca_plot.png")
+    ins.append(f"{RESULTS_DIR}/distance_matrix.png")
+    ins.append(f"{RESULTS_DIR}/volcano_plot.png")
+    ins.append(f"{RESULTS_DIR}/heatmap.png")
+    # Human DESeq2
+    ins.append(f"{RESULTS_DIR}/deg_results_human.tsv")
+    ins.append(f"{RESULTS_DIR}/deg_results_significant_human.tsv")
+    ins.append(f"{RESULTS_DIR}/normalized_counts_human.tsv")
+    ins.append(f"{RESULTS_DIR}/pca_plot_human.png")
+    ins.append(f"{RESULTS_DIR}/distance_matrix_human.png")
+    ins.append(f"{RESULTS_DIR}/volcano_plot_human.png")
+    ins.append(f"{RESULTS_DIR}/heatmap_human.png")
+    # Viral DESeq2
+    ins.append(f"{RESULTS_DIR}/deg_results_viral.tsv")
+    ins.append(f"{RESULTS_DIR}/deg_results_significant_viral.tsv")
+    ins.append(f"{RESULTS_DIR}/normalized_counts_viral.tsv")
+    ins.append(f"{RESULTS_DIR}/pca_plot_viral.png")
+    ins.append(f"{RESULTS_DIR}/distance_matrix_viral.png")
+    ins.append(f"{RESULTS_DIR}/volcano_plot_viral.png")
+    ins.append(f"{RESULTS_DIR}/heatmap_viral.png")
+    # Enrichment
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA.tsv")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA.tsv")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA_dotplot.png")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA.tsv")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png")
+    ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png")
+    return ins
+
 rule all:
     input:
-        expand(f"{TRIM_DIR}/{{sample}}_1.trim.fq.gz", sample=SAMPLES),
-        expand(f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.html", sample=SAMPLES),
-        # Sorted BAMs, BAM indices, and gene counts
-        expand(f"{ALIGN_DIR}/{{sample}}_Aligned.sortedByCoord.out.bam", sample=SAMPLES),
-        expand(f"{ALIGN_DIR}/{{sample}}_BAMIndex.bai", sample=SAMPLES),
-        expand(f"{ALIGN_DIR}/{{sample}}_ReadsPerGene.out.tab", sample=SAMPLES),
-        f"{MULTIQC_DIR}/multiqc_report.html",
-        # Strandedness reports
-        expand(f"{RSEQC_DIR}/{{sample}}_infer_experiment.txt", sample=SAMPLES),
-        f"{RSEQC_DIR}/strandedness_summary.tsv",
-        f"{COUNTS_DIR}/gene_counts_matrix.tsv",
-        f"{COUNTS_DIR}/gene_counts_matrix_human.tsv",
-        f"{COUNTS_DIR}/gene_counts_matrix_viral.tsv",
-        f"{RESULTS_DIR}/deg_results.tsv",
-        f"{RESULTS_DIR}/deg_results_significant.tsv",
-        f"{RESULTS_DIR}/normalized_counts.tsv",
-        f"{RESULTS_DIR}/pca_plot.png",
-        f"{RESULTS_DIR}/distance_matrix.png",
-        f"{RESULTS_DIR}/volcano_plot.png",
-        f"{RESULTS_DIR}/heatmap.png",
-        # Separate analyses (human / viral)
-        f"{RESULTS_DIR}/deg_results_human.tsv",
-        f"{RESULTS_DIR}/deg_results_significant_human.tsv",
-        f"{RESULTS_DIR}/normalized_counts_human.tsv",
-        f"{RESULTS_DIR}/pca_plot_human.png",
-        f"{RESULTS_DIR}/distance_matrix_human.png",
-        f"{RESULTS_DIR}/volcano_plot_human.png",
-        f"{RESULTS_DIR}/heatmap_human.png",
-        f"{RESULTS_DIR}/deg_results_viral.tsv",
-        f"{RESULTS_DIR}/deg_results_significant_viral.tsv",
-        f"{RESULTS_DIR}/normalized_counts_viral.tsv",
-        f"{RESULTS_DIR}/pca_plot_viral.png",
-        f"{RESULTS_DIR}/distance_matrix_viral.png",
-        f"{RESULTS_DIR}/volcano_plot_viral.png",
-        f"{RESULTS_DIR}/heatmap_viral.png",
-        # Enrichment (clusterProfiler ORA + GSEA on human DE genes)
-        f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA.tsv",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA.tsv",
-        f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA_dotplot.png",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png",
-        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA.tsv",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv",
-        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png"
+        _rule_all_inputs()
 
 # =============================================================================
 # Download reference genomes (optional convenience rule)
@@ -269,52 +390,91 @@ rule star_index:
 # =============================================================================
 # Read trimming & QC
 # =============================================================================
+def _fastp_input(wildcards):
+    """Return fastp input dict based on library type."""
+    if IS_PAIRED:
+        return {"r1": f"{RAW_DIR}/{wildcards.sample}{R1_SUFFIX}",
+                "r2": f"{RAW_DIR}/{wildcards.sample}{R2_SUFFIX}"}
+    return {"r1": f"{RAW_DIR}/{wildcards.sample}{SE_SUFFIX}"}
+
+def _fastp_output(wildcards):
+    """Return fastp output dict based on library type."""
+    d = {"html": f"{TRIM_DIR}/{wildcards.sample}.fastp.html",
+         "json": f"{TRIM_DIR}/{wildcards.sample}.fastp.json"}
+    if IS_PAIRED:
+        d["r1"] = f"{TRIM_DIR}/{wildcards.sample}_1.trim.fq.gz"
+        d["r2"] = f"{TRIM_DIR}/{wildcards.sample}_2.trim.fq.gz"
+    else:
+        d["r1"] = f"{TRIM_DIR}/{wildcards.sample}.trim.fq.gz"
+    return d
+
 rule fastp:
     input:
-        r1 = f"{RAW_DIR}/{{sample}}{R1_SUFFIX}",
-        r2 = f"{RAW_DIR}/{{sample}}{R2_SUFFIX}"
+        unpack(_fastp_input)
     output:
-        r1   = f"{TRIM_DIR}/{{sample}}_1.trim.fq.gz",
-        r2   = f"{TRIM_DIR}/{{sample}}_2.trim.fq.gz",
-        html = f"{TRIM_DIR}/{{sample}}.fastp.html",
-        json = f"{TRIM_DIR}/{{sample}}.fastp.json"
+        unpack(_fastp_output)
     conda: "envs/ge_analysis.yaml"
     threads: THREADS_FASTP
-    shell:
-        """
-        fastp \
-            -i {input.r1} \
-            -I {input.r2} \
-            -o {output.r1} \
-            -O {output.r2} \
-            --html {output.html} \
-            --json {output.json} \
-            --thread {threads}
-        """
+    run:
+        if IS_PAIRED:
+            shell(
+                "fastp -i {input.r1} -I {input.r2} "
+                "-o {output.r1} -O {output.r2} "
+                "--html {output.html} --json {output.json} "
+                "--thread {threads}"
+            )
+        else:
+            shell(
+                "fastp -i {input.r1} -o {output.r1} "
+                "--html {output.html} --json {output.json} "
+                "--thread {threads}"
+            )
+
+def _fastqc_input(wildcards):
+    """Return fastqc input dict based on library type."""
+    if IS_PAIRED:
+        return {"r1": f"{TRIM_DIR}/{wildcards.sample}_1.trim.fq.gz",
+                "r2": f"{TRIM_DIR}/{wildcards.sample}_2.trim.fq.gz"}
+    return {"r1": f"{TRIM_DIR}/{wildcards.sample}.trim.fq.gz"}
+
+def _fastqc_output(wildcards):
+    """Return fastqc output dict based on library type."""
+    if IS_PAIRED:
+        return {"r1_html": f"{FASTQC_DIR}/{wildcards.sample}_1.trim_fastqc.html",
+                "r2_html": f"{FASTQC_DIR}/{wildcards.sample}_2.trim_fastqc.html",
+                "r1_zip":  f"{FASTQC_DIR}/{wildcards.sample}_1.trim_fastqc.zip",
+                "r2_zip":  f"{FASTQC_DIR}/{wildcards.sample}_2.trim_fastqc.zip"}
+    return {"html": f"{FASTQC_DIR}/{wildcards.sample}.trim_fastqc.html",
+            "zip":  f"{FASTQC_DIR}/{wildcards.sample}.trim_fastqc.zip"}
 
 rule fastqc:
     input:
-        r1 = f"{TRIM_DIR}/{{sample}}_1.trim.fq.gz",
-        r2 = f"{TRIM_DIR}/{{sample}}_2.trim.fq.gz"
+        unpack(_fastqc_input)
     output:
-        r1_html = f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.html",
-        r2_html = f"{FASTQC_DIR}/{{sample}}_2.trim_fastqc.html",
-        r1_zip  = f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.zip",
-        r2_zip  = f"{FASTQC_DIR}/{{sample}}_2.trim_fastqc.zip"
+        unpack(_fastqc_output)
     conda: "envs/ge_analysis.yaml"
     threads: THREADS_FASTQC
-    shell:
-        """
-        fastqc \
-            {input.r1} {input.r2} \
-            --outdir {FASTQC_DIR} \
-            --threads {threads}
-        """
+    run:
+        if IS_PAIRED:
+            shell(
+                "fastqc {input.r1} {input.r2} "
+                "--outdir {FASTQC_DIR} --threads {threads}"
+            )
+        else:
+            shell(
+                "fastqc {input.r1} "
+                "--outdir {FASTQC_DIR} --threads {threads}"
+            )
+
+def _multiqc_input():
+    """Return multiqc input list conditioned on library type."""
+    if IS_PAIRED:
+        return expand(f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.html", sample=SAMPLES)
+    return expand(f"{FASTQC_DIR}/{{sample}}.trim_fastqc.html", sample=SAMPLES)
 
 rule multiqc:
     input:
-        fastqc_files = expand(f"{FASTQC_DIR}/{{sample}}_1.trim_fastqc.html", sample=SAMPLES),
-        fastp_files  = expand(f"{TRIM_DIR}/{{sample}}.fastp.json", sample=SAMPLES)
+        unpack(_multiqc_input)
     output:
         report = f"{MULTIQC_DIR}/multiqc_report.html"
     conda: "envs/ge_analysis.yaml"
@@ -326,11 +486,19 @@ rule multiqc:
 # =============================================================================
 # Alignment
 # =============================================================================
+def _star_align_input(wildcards):
+    """Return star_align input dict based on library type."""
+    d = {"index": INDEX_DIR}
+    if IS_PAIRED:
+        d["r1"] = f"{TRIM_DIR}/{wildcards.sample}_1.trim.fq.gz"
+        d["r2"] = f"{TRIM_DIR}/{wildcards.sample}_2.trim.fq.gz"
+    else:
+        d["r1"] = f"{TRIM_DIR}/{wildcards.sample}.trim.fq.gz"
+    return d
+
 rule star_align:
     input:
-        r1    = f"{TRIM_DIR}/{{sample}}_1.trim.fq.gz",
-        r2    = f"{TRIM_DIR}/{{sample}}_2.trim.fq.gz",
-        index = INDEX_DIR
+        unpack(_star_align_input)
     output:
         bam    = f"{ALIGN_DIR}/{{sample}}_Aligned.sortedByCoord.out.bam",
         counts = f"{ALIGN_DIR}/{{sample}}_ReadsPerGene.out.tab",
@@ -343,22 +511,23 @@ rule star_align:
         prefix = f"{ALIGN_DIR}/{{sample}}_",
         sort_ram = MEM_MB_STAR_ALIGN * 1000000,   # STAR expects bytes
         tmpdir = lambda wildcards: f"/tmp/STAR_{wildcards.sample}"
-    shell:
-        """
-        rm -rf {params.tmpdir}
-        STAR --runThreadN {threads} \
-             --genomeDir {input.index} \
-             --readFilesIn {input.r1} {input.r2} \
-             --readFilesCommand gunzip -c \
-             --outFileNamePrefix {params.prefix} \
-             --outSAMtype BAM SortedByCoordinate \
-             --outSAMunmapped Within \
-             --quantMode GeneCounts \
-             --outSAMattributes Standard \
-             --limitBAMsortRAM {params.sort_ram} \
-             --outTmpDir {params.tmpdir}
-        rm -rf {params.tmpdir}
-        """
+    run:
+        reads = "{input.r1} {input.r2}" if IS_PAIRED else "{input.r1}"
+        shell(
+            "rm -rf {params.tmpdir} && "
+            "STAR --runThreadN {threads} "
+            "--genomeDir {input.index} "
+            "--readFilesIn " + reads + " "
+            "--readFilesCommand gunzip -c "
+            "--outFileNamePrefix {params.prefix} "
+            "--outSAMtype BAM SortedByCoordinate "
+            "--outSAMunmapped Within "
+            "--quantMode GeneCounts "
+            "--outSAMattributes Standard "
+            "--limitBAMsortRAM {params.sort_ram} "
+            "--outTmpDir {params.tmpdir} && "
+            "rm -rf {params.tmpdir}"
+        )
 
 rule samtools_index:
     input:

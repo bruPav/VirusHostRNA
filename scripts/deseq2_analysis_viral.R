@@ -63,23 +63,64 @@ if (nrow(counts) < 2) {
     warning("Very few viral genes detected. DESeq2 analysis may be limited.")
 }
 
-# 2. Create DESeq2 Dataset with simple design
-# Use Control column if available, otherwise use Condition
-if ("Control" %in% colnames(metadata)) {
-    metadata$Control <- factor(metadata$Control)
-    if ("Negative" %in% levels(metadata$Control)) {
-        metadata$Control <- relevel(metadata$Control, ref = "Negative")
+# 2. Create DESeq2 Dataset
+# Use explicit design formula from config, or auto-detect from metadata columns
+design_str <- snakemake@config[["design_formula"]]
+if (!is.null(design_str) && nchar(design_str) > 0) {
+    design_formula <- as.formula(design_str)
+    for (col in all.vars(design_formula)) {
+        if (col %in% colnames(metadata)) {
+            metadata[[col]] <- factor(metadata[[col]])
+        } else {
+            stop(paste("Design formula references column", col, "not found in metadata"))
+        }
     }
-    design_formula <- ~ Control
-} else if ("Condition" %in% colnames(metadata)) {
-    metadata$Condition <- factor(metadata$Condition)
-    design_formula <- ~ Condition
 } else {
-    stop("Metadata must contain either 'Control' or 'Condition' column.")
+    # Auto-detect from Control/Condition column
+    if ("Control" %in% colnames(metadata)) {
+        metadata$Control <- factor(metadata$Control)
+        if ("Negative" %in% levels(metadata$Control)) {
+            metadata$Control <- relevel(metadata$Control, ref = "Negative")
+        }
+        design_formula <- ~ Control
+    } else if ("Condition" %in% colnames(metadata)) {
+        metadata$Condition <- factor(metadata$Condition)
+        design_formula <- ~ Condition
+    } else {
+        stop("Metadata must contain either 'Control' or 'Condition' column, or set design_formula in config")
+    }
 }
 
 condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
 padj_threshold <- if (is.null(snakemake@config[["deseq2_padj"]])) 0.05 else as.numeric(snakemake@config[["deseq2_padj"]])
+
+# 3. Pre-filter low-count genes (viral counts are sparse; use permissive defaults)
+min_count <- if (is.null(snakemake@config[["min_count"]])) 5 else as.numeric(snakemake@config[["min_count"]])
+min_samples <- if (is.null(snakemake@config[["min_samples"]])) min(2, ncol(counts)) else as.numeric(snakemake@config[["min_samples"]])
+keep <- rowSums(counts >= min_count) >= min_samples
+message(paste("Pre-filtering: kept", sum(keep), "of", nrow(counts), "viral genes",
+              "(min", min_count, "counts in", min_samples, "samples)"))
+counts <- counts[keep, , drop = FALSE]
+
+# Re-check after filtering
+if (nrow(counts) == 0) {
+    message("All viral genes filtered out. Creating placeholder outputs.")
+    empty_df <- data.frame(GeneID=character(), GeneSymbol=character(), GeneBiotype=character(),
+                           baseMean=numeric(), log2FoldChange=numeric(), lfcSE=numeric(),
+                           stat=numeric(), pvalue=numeric(), padj=numeric())
+    write.table(empty_df, snakemake@output$results, sep="\t", quote=FALSE, row.names=FALSE)
+    write.table(empty_df, snakemake@output$results_filtered, sep="\t", quote=FALSE, row.names=FALSE)
+    writeLines("gene_id", snakemake@output$normalized_counts)
+    for (plot_out in c(snakemake@output$pca, snakemake@output$distance,
+                       snakemake@output$volcano, snakemake@output$heatmap)) {
+        png(plot_out, width=800, height=600, res=150)
+        plot.new(); title("No viral genes passed pre-filtering")
+        dev.off()
+    }
+    message("Placeholder outputs created. Pipeline can continue.")
+    sink(type="message"); sink(); close(log)
+    quit(save="no", status=0)
+}
 
 dds <- DESeqDataSetFromMatrix(countData = round(counts),
                               colData = metadata,
@@ -96,9 +137,12 @@ if (any(is.na(sf))) {
 sizeFactors(dds) <- sf
 dds <- DESeq(dds)
 
-# 3. Extract Results
-if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
-    res <- results(dds, contrast=c("Control", "Experiment", "Negative"))
+# 4. Extract Results
+contrast_cfg <- snakemake@config[["deseq2_contrast"]]
+if (!is.null(contrast_cfg) && length(contrast_cfg) == 3) {
+    res <- results(dds, contrast = contrast_cfg)
+} else if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
+    res <- results(dds, contrast = c("Control", "Experiment", "Negative"))
 } else {
     res <- results(dds)
 }
