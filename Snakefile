@@ -24,19 +24,20 @@ HUMAN_GENOME_GZ = config.get("human_genome_gz", "GRCh38.primary_assembly.genome.
 HUMAN_GTF_GZ    = config.get("human_gtf_gz", "gencode.v49.annotation.gtf.gz")
 PATHOGEN_GENOME = config.get("pathogen_genome", "GCF_006447215.1_ASM644721v1_genomic.fna")
 PATHOGEN_GTF    = config.get("pathogen_gtf", "GCF_006447215.1_ASM644721v1_genomic.gtf")
-COMBINED_GTF_BED = config.get("combined_gtf_for_bed", "combined_genome.CDSasExon.gtf")
+COMBINED_GTF_BED = config.get("combined_gtf_for_bed", "combined_genome.gtf")
 
 # Derived names (uncompressed)
 HUMAN_GENOME = HUMAN_GENOME_GZ.replace(".gz", "")
 HUMAN_GTF    = HUMAN_GTF_GZ.replace(".gz", "")
 
-# Pathogen FA: if the input already ends with .fa, append _prepared to avoid
-# a circular dependency (input and output would be the same file).
-_pathogen_stem = os.path.splitext(PATHOGEN_GENOME)[0]
-if PATHOGEN_GENOME.endswith(".fa"):
-    PATHOGEN_FA = _pathogen_stem + "_prepared.fa"
-else:
-    PATHOGEN_FA = _pathogen_stem + ".fa"
+# Pathogen FA: strip any known extension (.fa, .fna, .fna.gz, .fa.gz, etc.)
+# and append _prepared.fa to avoid a circular dependency (same path for input/output).
+_pathogen_basename = os.path.basename(PATHOGEN_GENOME)
+for ext in ['.fna.gz', '.fa.gz', '.fna', '.fa']:
+    if _pathogen_basename.endswith(ext):
+        _pathogen_basename = _pathogen_basename[:-len(ext)]
+        break
+PATHOGEN_FA = _pathogen_basename + "_prepared.fa"
 PATHOGEN_GTF_PREPARED = os.path.splitext(PATHOGEN_GTF)[0] + "_prepared.gtf"
 
 COMBINED_GENOME = "combined_genome.fa"
@@ -368,6 +369,7 @@ rule make_genes_bed:
         COMBINED_GTF_BED
     output:
         GENES_BED
+    conda: "envs/ge_analysis.yaml"
     shell:
         """
         python scripts/gtf2bed.py {input} > {output}
@@ -392,6 +394,7 @@ rule strandedness_summary:
         reports = expand(f"{RSEQC_DIR}/{{sample}}_infer_experiment.txt", sample=SAMPLES)
     output:
         tsv = f"{RSEQC_DIR}/strandedness_summary.tsv"
+    conda: "envs/ge_analysis.yaml"
     run:
         import os
 
@@ -417,6 +420,7 @@ rule count_matrix:
         strandedness = f"{RSEQC_DIR}/strandedness_summary.tsv"
     output:
         matrix = f"{COUNTS_DIR}/gene_counts_matrix.tsv"
+    conda: "envs/ge_analysis.yaml"
     run:
         import pandas as pd
         import os
@@ -464,7 +468,7 @@ rule count_matrix:
 
                     current_sample = sample
 
-                    if 'Fraction of reads explained by "1++,1--,2+-,2+-"' in content:
+                    if 'Fraction of reads explained by "1++,1--,2+-,2-+"' in content:
                         match = re.search(r':\s*([\d.]+)', content)
                         if match:
                             first_strand_frac = float(match.group(1))
@@ -506,6 +510,7 @@ rule separate_viral_counts:
     output:
         human_matrix = f"{COUNTS_DIR}/gene_counts_matrix_human.tsv",
         viral_matrix = f"{COUNTS_DIR}/gene_counts_matrix_viral.tsv"
+    conda: "envs/ge_analysis.yaml"
     run:
         import pandas as pd
         import gzip
@@ -515,7 +520,14 @@ rule separate_viral_counts:
 
         # Extract pathogen gene IDs from the GTF file (handle gzipped or plain text)
         viral_gene_ids = set()
-        _open = gzip.open if input.pathogen_gtf.endswith('.gz') or open(input.pathogen_gtf, 'rb').read(2) == b'\x1f\x8b' else open
+        _is_gzipped = input.pathogen_gtf.endswith('.gz')
+        if not _is_gzipped:
+            try:
+                with open(input.pathogen_gtf, 'rb') as _check:
+                    _is_gzipped = _check.read(2) == b'\x1f\x8b'
+            except (OSError, IOError):
+                pass
+        _open = gzip.open if _is_gzipped else open
         with _open(input.pathogen_gtf, 'rt') as f:
             for line in f:
                 if line.startswith('#'):

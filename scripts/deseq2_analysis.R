@@ -7,7 +7,6 @@ library(DESeq2)
 library(ggplot2)
 library(pheatmap)
 library(ggrepel)
-library(vsn)
 library(biomaRt)
 
 # 1. Load Data

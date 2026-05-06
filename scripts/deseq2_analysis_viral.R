@@ -91,8 +91,7 @@ if (any(is.na(sf))) {
   sf[is.na(sf)] <- 1
 }
 sizeFactors(dds) <- sf
-# For small gene sets, use betaPrior=FALSE to avoid convergence issues
-dds <- DESeq(dds, betaPrior=FALSE)
+dds <- DESeq(dds)
 
 # 3. Extract Results
 if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
@@ -211,8 +210,7 @@ if (n_sig_genes == 0) {
     title("No significantly differentially expressed viral genes (padj < 0.05)")
 } else {
     heatmap_mat <- heatmap_transform[significant_genes_idx, , drop = FALSE]
-    # Use gene IDs for row names
-    rownames(heatmap_mat) <- rownames(heatmap_mat)
+    # Use gene IDs for row names (already set)
     # Build unique display labels that still show Condition
     display_labels <- paste0(condition_labels, "_", seq_along(condition_labels))
     colnames(heatmap_mat) <- display_labels
