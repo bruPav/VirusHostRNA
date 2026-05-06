@@ -78,6 +78,9 @@ if ("Control" %in% colnames(metadata)) {
     stop("Metadata must contain either 'Control' or 'Condition' column.")
 }
 
+condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
+padj_threshold <- as.numeric(snakemake@config[["deseq2_padj"]])
+
 dds <- DESeqDataSetFromMatrix(countData = round(counts),
                               colData = metadata,
                               design = design_formula)
@@ -113,9 +116,9 @@ res_df$GeneBiotype <- "viral_gene"
 res_df <- res_df[, c("GeneID", "GeneSymbol", "GeneBiotype", setdiff(colnames(res_df), c("GeneID", "GeneSymbol", "GeneBiotype")))]
 write.table(res_df, snakemake@output$results, sep="\t", quote=FALSE, row.names=FALSE)
 
-# Filter and write significant genes (padj < 0.05)
-res_df_significant <- res_df[!is.na(res_df$padj) & res_df$padj < 0.05, ]
-message(paste("Found", nrow(res_df_significant), "significantly differentially expressed viral genes (padj < 0.05)"))
+# Filter and write significant genes
+res_df_significant <- res_df[!is.na(res_df$padj) & res_df$padj < padj_threshold, ]
+message(paste("Found", nrow(res_df_significant), "significantly differentially expressed viral genes (padj <", padj_threshold, ")"))
 write.table(res_df_significant, snakemake@output$results_filtered, sep="\t", quote=FALSE, row.names=FALSE)
 
 # Save normalized counts for downstream analysis
@@ -140,19 +143,19 @@ if (!use_vst) {
 
 # Build a vector of condition labels aligned to sample columns
 sample_names <- if (use_vst) colnames(vsd) else colnames(transform_mat)
-condition_labels <- as.character(metadata$Condition[match(sample_names, rownames(metadata))])
+condition_labels <- as.character(metadata[[condition_col]][match(sample_names, rownames(metadata))])
 
 # --- VISUALIZATION 1: PCA Plot ---
 png(snakemake@output$pca, width=1200, height=1000, res=150)
 if (use_vst) {
-  pcaData <- plotPCA(vsd, intgroup = c("Condition"), returnData = TRUE)
+  pcaData <- plotPCA(vsd, intgroup = condition_col, returnData = TRUE)
   percentVar <- round(100 * attr(pcaData, "percentVar"))
 } else {
   pca <- prcomp(t(transform_mat), center = TRUE, scale. = FALSE)
   percentVar <- round(100 * summary(pca)$importance[2, 1:2])
-  pcaData <- data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2], Condition = condition_labels)
+  pcaData <- setNames(data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2], condition_labels), c("PC1", "PC2", condition_col))
 }
-ggplot(pcaData, aes(PC1, PC2, color = Condition)) +
+ggplot(pcaData, aes(PC1, PC2, color = .data[[condition_col]])) +
   geom_point(size = 4, alpha = 0.8) +
   xlab(paste0("PC1: ", percentVar[1], "% variance")) +
   ylab(paste0("PC2: ", percentVar[2], "% variance")) +
@@ -182,19 +185,19 @@ png(snakemake@output$volcano, width=1200, height=1200, res=150)
 # Use gene IDs for labels (viral genes don't have symbols)
 res_df$gene_label <- res_df$GeneID
 ggplot(res_df, aes(x=log2FoldChange, y=-log10(padj))) +
-    geom_point(aes(color = padj < 0.05), alpha=0.6, size=3) +
+    geom_point(aes(color = padj < padj_threshold), alpha=0.6, size=3) +
     theme_minimal() +
     scale_color_manual(values = c("grey", "red")) +
-    geom_text_repel(data=subset(res_df, !is.na(padj) & padj < 0.05), aes(label=gene_label), size=4) +
+    geom_text_repel(data=subset(res_df, !is.na(padj) & padj < padj_threshold), aes(label=gene_label), size=4) +
     labs(title="Differential Expression Volcano Plot (Viral Genes)", 
-         subtitle="Red: Adjusted P-Value < 0.05",
+         subtitle=paste0("Red: Adjusted P-Value < ", padj_threshold),
          x="log2 Fold Change",
          y="-log10 Adjusted P-value")
 dev.off()
 
 # --- VISUALIZATION 4: Significant DE Genes Heatmap ---
 # Use all genes with padj < 0.05
-significant_genes_idx <- which(!is.na(res$padj) & res$padj < 0.05)
+significant_genes_idx <- which(!is.na(res$padj) & res$padj < padj_threshold)
 
 # Adjust height based on number of genes (minimum 800, add 30 pixels per gene)
 n_sig_genes <- length(significant_genes_idx)
@@ -205,9 +208,9 @@ heatmap_transform <- if (use_vst) assay(vsd) else transform_mat
 
 png(snakemake@output$heatmap, width = 1200, height = heatmap_height, res = 150)
 if (n_sig_genes == 0) {
-    message("No viral genes with padj < 0.05; skipping heatmap.")
+    message(paste0("No viral genes with padj < ", padj_threshold, "; skipping heatmap."))
     plot.new()
-    title("No significantly differentially expressed viral genes (padj < 0.05)")
+    title(paste0("No significantly differentially expressed viral genes (padj < ", padj_threshold, ")"))
 } else {
     heatmap_mat <- heatmap_transform[significant_genes_idx, , drop = FALSE]
     # Use gene IDs for row names (already set)
@@ -215,7 +218,7 @@ if (n_sig_genes == 0) {
     display_labels <- paste0(condition_labels, "_", seq_along(condition_labels))
     colnames(heatmap_mat) <- display_labels
     # Build annotation data frame whose rownames match the heatmap columns
-    ann_col <- data.frame(Condition = condition_labels)
+    ann_col <- setNames(data.frame(condition_labels), condition_col)
     rownames(ann_col) <- display_labels
     # hclust needs at least 2 objects; disable clustering when only 1 row or 1 column
     cluster_rows <- n_sig_genes >= 2
@@ -226,8 +229,11 @@ if (n_sig_genes == 0) {
              cluster_cols = cluster_cols,
              annotation_col = ann_col,
              fontsize_row = 10,
-             main = paste("Significantly Differentially Expressed Viral Genes (padj < 0.05, n =", n_sig_genes, ")"))
+             main = paste0("Significantly Differentially Expressed Viral Genes (padj < ", padj_threshold, ", n = ", n_sig_genes, ")"))
 }
 dev.off()
 
 message("Viral gene DESeq2 analysis completed successfully")
+
+sink(type="message")
+sink()

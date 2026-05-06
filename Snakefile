@@ -119,7 +119,11 @@ rule all:
         f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA.tsv",
         f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA.tsv",
         f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA_dotplot.png",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png"
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png",
+        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA.tsv",
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv",
+        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png",
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png"
 
 # =============================================================================
 # Download reference genomes (optional convenience rule)
@@ -635,12 +639,20 @@ rule enrichment_analysis:
         f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA.tsv",
         f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA.tsv",
         f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA_dotplot.png",
-        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png"
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png",
+        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA.tsv",
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv",
+        f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png",
+        f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png"
     log:
         f"{LOGS_DIR}/enrichment.log"
     conda: "envs/enrichment.yaml"
+    params:
+        pvalue = config.get("enrichment_pvalue", 0.2),
+        qvalue = config.get("enrichment_qvalue", 0.2),
+        organism = config.get("kegg_organism", "hsa")
     shell:
-        "Rscript scripts/enrichment_analysis_standalone.R 2>&1 | tee {log}"
+        "Rscript scripts/enrichment_analysis_standalone.R {params.pvalue} {params.qvalue} {params.organism} > {log} 2>&1"
 
 # =============================================================================
 # HiPathia pathway analysis (commented out – enable if needed)

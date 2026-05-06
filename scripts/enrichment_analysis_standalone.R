@@ -22,6 +22,11 @@ find_project_root <- function() {
   }
   return(getwd())  # fallback
 }
+args <- commandArgs(trailingOnly = TRUE)
+enrich_pvalue  <- if (length(args) >= 1) as.numeric(args[1]) else 0.2
+enrich_qvalue  <- if (length(args) >= 2) as.numeric(args[2]) else 0.2
+kegg_organism  <- if (length(args) >= 3) args[3] else "hsa"
+
 project_dir <- find_project_root()
 
 deseq2_file <- file.path(project_dir, "results", "deg_results_human.tsv")
@@ -80,7 +85,7 @@ ora_go   <- NULL
 if (length(de_entrez) >= 5) {
   message("Running KEGG over-representation...")
   ora_kegg <- tryCatch({
-    enrichKEGG(gene = de_entrez, organism = "hsa", pvalueCutoff = 0.2, qvalueCutoff = 0.2)
+    enrichKEGG(gene = de_entrez, organism = kegg_organism, pvalueCutoff = enrich_pvalue, qvalueCutoff = enrich_qvalue)
   }, error = function(e) { message("enrichKEGG: ", e$message); NULL })
   if (!is.null(ora_kegg) && nrow(ora_kegg@result) > 0) {
     write.table(ora_kegg@result, file.path(out_dir, "enrich_KEGG_ORA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
@@ -98,10 +103,16 @@ if (length(de_entrez) >= 5) {
       }
       ggsave(file.path(out_dir, "enrich_KEGG_ORA_dotplot.png"), p, width = 8, height = max(5, min(15, nrow(ora_kegg@result)) * 0.3), dpi = 150)
     }, error = function(e) message("  Dotplot skipped: ", e$message))
+  } else {
+    message("  KEGG ORA: no significant terms found. Creating empty output files.")
+    writeLines("No KEGG ORA results at the current p-value cutoff.", file.path(out_dir, "enrich_KEGG_ORA.tsv"))
+    png(file.path(out_dir, "enrich_KEGG_ORA_dotplot.png"), width = 800, height = 600, res = 150)
+    plot.new(); title("KEGG ORA: no significant terms found")
+    dev.off()
   }
   message("Running GO BP over-representation...")
   ora_go <- tryCatch({
-    enrichGO(gene = de_entrez, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = 0.2, qvalueCutoff = 0.2)
+    enrichGO(gene = de_entrez, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, qvalueCutoff = enrich_qvalue)
   }, error = function(e) { message("enrichGO: ", e$message); NULL })
   if (!is.null(ora_go) && nrow(ora_go@result) > 0) {
     write.table(ora_go@result, file.path(out_dir, "enrich_GOBP_ORA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
@@ -119,9 +130,23 @@ if (length(de_entrez) >= 5) {
       }
       ggsave(file.path(out_dir, "enrich_GOBP_ORA_dotplot.png"), p, width = 8, height = max(5, min(15, nrow(ora_go@result)) * 0.3), dpi = 150)
     }, error = function(e) message("  Dotplot skipped: ", e$message))
+  } else {
+    message("  GO BP ORA: no significant terms found. Creating empty output files.")
+    writeLines("No GO BP ORA results at the current p-value cutoff.", file.path(out_dir, "enrich_GOBP_ORA.tsv"))
+    png(file.path(out_dir, "enrich_GOBP_ORA_dotplot.png"), width = 800, height = 600, res = 150)
+    plot.new(); title("GO BP ORA: no significant terms found")
+    dev.off()
   }
 } else {
-  message("ORA skipped: fewer than 5 DE genes. Consider relaxing padj or running GSEA only.")
+  message("ORA skipped: fewer than 5 DE genes. Creating empty placeholder files.")
+  writeLines("Not enough DE genes for ORA at the current p-value cutoff.", file.path(out_dir, "enrich_KEGG_ORA.tsv"))
+  writeLines("Not enough DE genes for ORA at the current p-value cutoff.", file.path(out_dir, "enrich_GOBP_ORA.tsv"))
+  png(file.path(out_dir, "enrich_KEGG_ORA_dotplot.png"), width = 800, height = 600, res = 150)
+  plot.new(); title("KEGG ORA: not enough DE genes")
+  dev.off()
+  png(file.path(out_dir, "enrich_GOBP_ORA_dotplot.png"), width = 800, height = 600, res = 150)
+  plot.new(); title("GO BP ORA: not enough DE genes")
+  dev.off()
 }
 
 # --- GSEA: Gene Set Enrichment Analysis (ranked by signed statistic) ---
@@ -133,7 +158,7 @@ gene_list <- sort(gene_list, decreasing = TRUE)
 
 message("Running KEGG GSEA...")
 gsea_kegg <- tryCatch({
-  gseKEGG(geneList = gene_list, organism = "hsa", pvalueCutoff = 0.2, pAdjustMethod = "BH")
+    gseKEGG(geneList = gene_list, organism = kegg_organism, pvalueCutoff = enrich_pvalue, pAdjustMethod = "BH")
 }, error = function(e) { message("gseKEGG: ", e$message); NULL })
 if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
   write.table(gsea_kegg@result, file.path(out_dir, "enrich_KEGG_GSEA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
@@ -162,7 +187,7 @@ if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
 
 message("Running GO BP GSEA...")
 gsea_go <- tryCatch({
-  gseGO(geneList = gene_list, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = 0.2, pAdjustMethod = "BH")
+  gseGO(geneList = gene_list, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, pAdjustMethod = "BH")
 }, error = function(e) { message("gseGO: ", e$message); NULL })
 if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
   write.table(gsea_go@result, file.path(out_dir, "enrich_GOBP_GSEA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)

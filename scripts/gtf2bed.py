@@ -49,7 +49,7 @@ def parse_gtf(gtf_file):
                         continue
                 else:
                     try:
-                        key, val = attr.split(None, 1)
+                        key, val = attr.split(maxsplit=1)
                     except ValueError:
                         continue
                 
