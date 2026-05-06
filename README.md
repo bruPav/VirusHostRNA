@@ -177,6 +177,20 @@ star_genome_sa_sparse_d: 2
 mem_mb_star_index: 30000
 mem_mb_star_align: 8000
 
+# DESeq2 significance threshold for filtering DE genes
+deseq2_padj: 0.05
+
+# Enrichment analysis (clusterProfiler)
+enrichment_pvalue: 0.2       # p-value cutoff for ORA and GSEA
+enrichment_qvalue: 0.2       # q-value cutoff for ORA and GSEA
+kegg_organism: "hsa"         # KEGG organism code
+
+# Pathogen chromosome prefixes for viral gene identification.
+# Used as a fallback by separate_viral_counts beyond GTF gene_id matching.
+# Set to prefixes matching your pathogen (e.g. ["NC_"] for RefSeq organisms,
+# ["NC_075498"] for the default adenovirus).
+pathogen_gene_prefixes: ["NC_075498"]
+
 # Reference file names, download URLs, FASTQ suffixes, etc.
 # ... see config.yaml for the full list
 ```
@@ -235,7 +249,7 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 | Path | Description |
 |------|-------------|
 | `results/deg_results_human.tsv` | DESeq2 results for human genes |
-| `results/deg_results_significant_human.tsv` | Significant DE genes (padj < 0.05) |
+| `results/deg_results_significant_human.tsv` | Significant DE genes (padj threshold from config) |
 | `results/normalized_counts_human.tsv` | Normalized counts (human) |
 | `results/pca_plot_human.png` | PCA of human gene expression |
 | `results/volcano_plot_human.png` | Volcano plot (human) |
@@ -257,9 +271,9 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 1. Replace `pathogen_genome` and `pathogen_gtf` in `config.yaml` with your
    organism's FASTA and GTF files.
 2. Update `combined_gtf_for_bed` if you have a custom combined annotation.
-3. The `separate_viral_counts` rule identifies pathogen genes by their GTF
-   gene IDs and `NC_` chromosome prefixes. If your pathogen uses different
-   identifiers, review that rule.
+3. Set `pathogen_gene_prefixes` in `config.yaml` to match your pathogen's
+   chromosome accessions (used by `separate_viral_counts` as a fallback
+   beyond GTF gene_id extraction).
 
 ## Adapting for Human-Only (No Pathogen)
 
@@ -321,7 +335,6 @@ AdenoGE/
 ├── config.yaml               # All tuneable parameters
 ├── samples.tsv               # Your sample metadata (create this!)
 ├── samples_template.tsv      # Template with example entries
-├── Samplesheet.tsv           # Sample name mapping (only for standalone HiPathia script, not used by pipeline)
 ├── envs/                     # Conda environment definitions
 │   ├── ge_analysis.yaml
 │   ├── enrichment.yaml
