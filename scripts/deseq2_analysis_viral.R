@@ -35,7 +35,7 @@ if (length(count_lines) <= 1) {
         dev.off()
     }
     message("Placeholder outputs created. Pipeline can continue.")
-    sink(type="message"); sink()
+    sink(type="message"); sink(); close(log)
     quit(save="no", status=0)
 }
 
@@ -79,7 +79,7 @@ if ("Control" %in% colnames(metadata)) {
 }
 
 condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
-padj_threshold <- as.numeric(snakemake@config[["deseq2_padj"]])
+padj_threshold <- if (is.null(snakemake@config[["deseq2_padj"]])) 0.05 else as.numeric(snakemake@config[["deseq2_padj"]])
 
 dds <- DESeqDataSetFromMatrix(countData = round(counts),
                               colData = metadata,
@@ -237,3 +237,4 @@ message("Viral gene DESeq2 analysis completed successfully")
 
 sink(type="message")
 sink()
+close(log)

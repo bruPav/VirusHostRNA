@@ -45,7 +45,7 @@ if ("Control" %in% colnames(metadata)) {
 }
 
 condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
-padj_threshold <- as.numeric(snakemake@config[["deseq2_padj"]])
+padj_threshold <- if (is.null(snakemake@config[["deseq2_padj"]])) 0.05 else as.numeric(snakemake@config[["deseq2_padj"]])
 
 dds <- DESeqDataSetFromMatrix(countData = round(counts),
                               colData = metadata,
@@ -213,3 +213,4 @@ dev.off()
 
 sink(type="message")
 sink()
+close(log)

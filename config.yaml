@@ -93,6 +93,12 @@ star_genome_sa_sparse_d: 2
 # Significance threshold for filtering DE genes
 deseq2_padj: 0.05
 
+# Chromosome/accession prefixes that identify pathogen genes in count matrices.
+# Used by separate_viral_counts as a fallback beyond GTF gene_id matching.
+# Set to prefixes that match your pathogen's chromosome names (e.g. ["NC_"] for
+# NCBI RefSeq organisms, or ["NC_075498"] for the default adenovirus).
+pathogen_gene_prefixes: ["NC_075498"]
+
 # -----------------------------------------------------------------------------
 # Enrichment analysis (clusterProfiler)
 # -----------------------------------------------------------------------------

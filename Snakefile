@@ -56,6 +56,12 @@ SAMPLES = sorted(
     )
 )
 
+if not SAMPLES:
+    raise SystemExit(
+        f"ERROR: No FASTQ files found in '{RAW_DIR}' matching '*{R1_SUFFIX}'.\n"
+        "Place paired-end reads there and re-run."
+    )
+
 # --- Sample metadata ----------------------------------------------------------
 SAMPLES_TSV = config.get("samples_tsv", "samples.tsv")
 
@@ -553,10 +559,12 @@ rule separate_viral_counts:
             is_viral = False
             if gene_id in viral_gene_ids:
                 is_viral = True
-            elif 'NC_075498' in str(gene_id):
-                is_viral = True
-            elif str(gene_id).startswith('NC_') and len(str(gene_id)) < 20:
-                is_viral = True
+            else:
+                gid_str = str(gene_id)
+                for prefix in config.get("pathogen_gene_prefixes", []):
+                    if prefix and gid_str.startswith(prefix):
+                        is_viral = True
+                        break
 
             if is_viral:
                 viral_indices.append(gene_id)
