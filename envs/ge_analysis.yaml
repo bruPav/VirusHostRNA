@@ -12,12 +12,11 @@ dependencies:
   - star=2.7.11b
   - samtools=1.19
   - rseqc=5.0.4
-  - r-base>=4.3
-  - bioconductor-deseq2
-  - bioconductor-vsn
-  - bioconductor-biomart
-  - r-ggplot2
-  - r-pheatmap
-  - r-ggrepel
-  - r-biocmanager
-
+  - r-base=4.3.3
+  - bioconductor-deseq2=1.42.0
+  - bioconductor-vsn=3.66.0
+  - bioconductor-biomart=2.58.0
+  - r-ggplot2=3.5.1
+  - r-pheatmap=1.0.12
+  - r-ggrepel=0.9.5
+  - r-biocmanager=1.30.23

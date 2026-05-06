@@ -257,6 +257,7 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 | `deseq2_analysis_human` | DESeq2 on human-only counts |
 | `deseq2_analysis_viral` | DESeq2 on viral-only counts (sparse-data-safe) |
 | `enrichment_analysis` | clusterProfiler ORA + GSEA (GO BP, KEGG) on human DE genes |
+| `generate_report` | HTML summary report linking to all results and plots |
 
 ### Key output files
 
@@ -270,6 +271,7 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 | `results/heatmap_human.png` | Heatmap of significant genes (human) |
 | `results/distance_matrix_human.png` | Sample distance matrix (human) |
 | `results/enrichment/` | GO/KEGG ORA and GSEA tables + dot plots |
+| `results/report.html` | HTML summary report — links to all plots, tables, and MultiQC |
 | `results/deg_results_viral.tsv` | DESeq2 results for pathogen genes |
 | `results/deg_results.tsv` | DESeq2 results for combined counts |
 | `counts/gene_counts_matrix.tsv` | Combined count matrix |
@@ -309,8 +311,10 @@ If you only have human samples (no co-infection), you can simplify:
 | `envs/enrichment.yaml` | clusterProfiler for GO/KEGG enrichment |
 | `envs/hipathia.yaml` | HiPathia pathway analysis (optional, currently disabled) |
 
-Environments are created automatically by Snakemake when using `--use-conda`.
-The first run will take longer while environments are solved and installed.
+All tool versions are pinned to exact releases for reproducibility (R, Bioconductor
+packages, Python tools). Environments are created automatically by Snakemake when
+using `--use-conda`. The first run will take longer while environments are solved
+and installed.
 
 ---
 
@@ -336,6 +340,36 @@ snakemake --profile profiles/slurm --use-conda --jobs 50
 
 Adjust `--jobs` to your cluster's concurrent job limit. Job logs appear in
 `logs/slurm/`.
+
+---
+
+## Running with Docker
+
+A `Dockerfile` is included that pre-builds all conda environments into the image,
+guaranteeing full reproducibility.
+
+```bash
+# Build the image (first time takes ~20 min to install conda envs)
+docker build -t virushostrna .
+
+# Run with your data mounted
+docker run --rm \
+  -v $(pwd)/rawdata:/opt/pipeline/rawdata \
+  -v $(pwd)/refs:/opt/pipeline/refs \
+  virushostrna --cores 8
+```
+
+**For Singularity / Apptainer (HPC):**
+
+```bash
+singularity build pipeline.sif docker-daemon://virushostrna:latest
+singularity exec --bind $(pwd)/rawdata:/opt/pipeline/rawdata \
+  pipeline.sif snakemake --use-conda --cores 8
+```
+
+> **Note:** Mount your data directories (`rawdata/`, reference files) at runtime
+> rather than embedding them in the image. The `.dockerignore` file excludes
+> large auto-generated directories to keep the image small.
 
 ---
 
@@ -368,9 +402,10 @@ This is expected when viral counts are very sparse. The
 factors and falling back to log2(normalized + 1) for visualisations when
 VST cannot be applied.
 
-**Enrichment analysis finds zero DE genes:**
-The enrichment script automatically relaxes `padj` from 0.05 to 0.1 if
-fewer than 10 DE genes pass the cutoff.
+**HTML report shows broken images:**
+The report uses relative paths to images. Keep `report.html` inside `results/`
+alongside the PNG files. If you move the report, copy the whole `results/`
+directory with it.
 
 **Snakemake reports "incomplete files" after an interrupted run:**
 Remove the marker files: `rm .snakemake/incomplete/*` and re-run.
@@ -383,10 +418,12 @@ Remove the marker files: `rm .snakemake/incomplete/*` and re-run.
 VirusHostRNA/
 ├── Snakefile                 # Main pipeline definition
 ├── config.yaml               # All tuneable parameters
+├── Dockerfile                # Container build definition
+├── .dockerignore             # Files excluded from Docker build
 ├── run_slurm.sh              # SLURM cluster launcher
 ├── samples.tsv               # Your sample metadata (create this!)
 ├── samples_template.tsv      # Template with example entries
-├── envs/                     # Conda environment definitions
+├── envs/                     # Conda environment definitions (versions pinned)
 │   ├── ge_analysis.yaml
 │   ├── enrichment.yaml
 │   └── hipathia.yaml
@@ -394,8 +431,10 @@ VirusHostRNA/
 │   └── slurm/
 │       └── config.yaml       # SLURM resource mapping
 ├── scripts/                  # R and Python analysis scripts
-│   ├── deseq2_analysis.R
-│   ├── deseq2_analysis_viral.R
+│   ├── deseq2_core.R         # Shared DESeq2 functions
+│   ├── deseq2_analysis.R     # Human / combined DESeq2
+│   ├── deseq2_analysis_viral.R # Viral DESeq2
+│   ├── generate_report.R     # HTML summary report
 │   ├── enrichment_analysis_standalone.R
 │   ├── gtf2bed.py
 │   ├── hipathia_analysis.R
@@ -408,6 +447,7 @@ VirusHostRNA/
 ├── star_index/               # STAR genome index (auto-generated)
 ├── counts/                   # Gene count matrices (auto-generated)
 ├── results/                  # DESeq2 + enrichment output (auto-generated)
+│   ├── report.html           # Summary HTML report
 │   └── enrichment/           # GO/KEGG ORA + GSEA tables and plots
 ├── rseqc/                    # Strandedness reports (auto-generated)
 ├── refs/                     # BED file for RSeQC (auto-generated)

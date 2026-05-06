@@ -246,6 +246,8 @@ def _rule_all_inputs():
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv")
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png")
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png")
+    # Summary report
+    ins.append(f"{RESULTS_DIR}/report.html")
     return ins
 
 rule all:
@@ -830,6 +832,54 @@ rule enrichment_analysis:
         organism = config.get("kegg_organism", "hsa")
     shell:
         "Rscript scripts/enrichment_analysis_standalone.R {params.pvalue} {params.qvalue} {params.organism} > {log} 2>&1"
+
+# =============================================================================
+# Summary HTML report
+# =============================================================================
+rule generate_report:
+    input:
+        # Human DESeq2
+        deg_human      = f"{RESULTS_DIR}/deg_results_human.tsv",
+        deg_sig_human  = f"{RESULTS_DIR}/deg_results_significant_human.tsv",
+        norm_human     = f"{RESULTS_DIR}/normalized_counts_human.tsv",
+        pca_human      = f"{RESULTS_DIR}/pca_plot_human.png",
+        volcano_human  = f"{RESULTS_DIR}/volcano_plot_human.png",
+        heatmap_human  = f"{RESULTS_DIR}/heatmap_human.png",
+        distance_human = f"{RESULTS_DIR}/distance_matrix_human.png",
+        # Viral DESeq2
+        deg_viral      = f"{RESULTS_DIR}/deg_results_viral.tsv",
+        deg_sig_viral  = f"{RESULTS_DIR}/deg_results_significant_viral.tsv",
+        norm_viral     = f"{RESULTS_DIR}/normalized_counts_viral.tsv",
+        pca_viral      = f"{RESULTS_DIR}/pca_plot_viral.png",
+        volcano_viral  = f"{RESULTS_DIR}/volcano_plot_viral.png",
+        heatmap_viral  = f"{RESULTS_DIR}/heatmap_viral.png",
+        distance_viral = f"{RESULTS_DIR}/distance_matrix_viral.png",
+        # Combined
+        deg_combined   = f"{RESULTS_DIR}/deg_results.tsv",
+        norm_combined  = f"{RESULTS_DIR}/normalized_counts.tsv",
+        # Enrichment
+        enrich_kegg        = f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA.tsv",
+        enrich_gobp        = f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA.tsv",
+        enrich_kegg_dot    = f"{RESULTS_DIR}/enrichment/enrich_KEGG_GSEA_dotplot.png",
+        enrich_gobp_dot    = f"{RESULTS_DIR}/enrichment/enrich_GOBP_GSEA_dotplot.png",
+        enrich_kegg_ora    = f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA.tsv",
+        enrich_gobp_ora    = f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv",
+        enrich_kegg_ora_dot= f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png",
+        enrich_gobp_ora_dot= f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png",
+        # Counts
+        count_matrix  = f"{COUNTS_DIR}/gene_counts_matrix.tsv",
+        count_human   = f"{COUNTS_DIR}/gene_counts_matrix_human.tsv",
+        count_viral   = f"{COUNTS_DIR}/gene_counts_matrix_viral.tsv",
+        # QC
+        multiqc       = f"{MULTIQC_DIR}/multiqc_report.html",
+        strandedness  = f"{RSEQC_DIR}/strandedness_summary.tsv"
+    output:
+        report = f"{RESULTS_DIR}/report.html"
+    log:
+        f"{LOGS_DIR}/report.log"
+    conda: "envs/ge_analysis.yaml"
+    script:
+        "scripts/generate_report.R"
 
 # =============================================================================
 # HiPathia pathway analysis (commented out – enable if needed)

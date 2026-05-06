@@ -1,284 +1,117 @@
 # DESeq2 Analysis for Viral Genes Only
-# This script is similar to deseq2_analysis.R but adapted for viral genes
-# which don't have Ensembl IDs, so gene symbol mapping is skipped
-
-# Redirect output to a log file if Snakemake is capturing it
-log <- file(snakemake@log[[1]], open="wt")
-sink(log)
-sink(log, type="message")
-
-library(DESeq2)
-library(ggplot2)
-library(pheatmap)
-library(ggrepel)
+# Uses shared core functions from deseq2_core.R with viral-specific
+# adaptations: sparse count handling, VST fallback, no Ensembl mapping.
+source("scripts/deseq2_core.R")
 library(vsn)
 
-# 1. Load Data
-# Handle empty viral count matrix (0 genes detected)
+# 1. Setup
+log_con <- setup_log(snakemake@log[[1]])
+
+# 2. Handle empty viral count matrix (0 genes) — early exit
 count_lines <- readLines(snakemake@input$counts)
-# Check if file has only a header or is completely empty
 if (length(count_lines) <= 1) {
-    message("Viral count matrix is empty (0 genes). Creating placeholder outputs.")
-    # Write empty results files
-    empty_df <- data.frame(GeneID=character(), GeneSymbol=character(), GeneBiotype=character(),
-                           baseMean=numeric(), log2FoldChange=numeric(), lfcSE=numeric(),
-                           stat=numeric(), pvalue=numeric(), padj=numeric())
-    write.table(empty_df, snakemake@output$results, sep="\t", quote=FALSE, row.names=FALSE)
-    write.table(empty_df, snakemake@output$results_filtered, sep="\t", quote=FALSE, row.names=FALSE)
-    # Write empty normalized counts (just header from count matrix)
-    writeLines(count_lines[1], snakemake@output$normalized_counts)
-    # Create placeholder plots
-    for (plot_out in c(snakemake@output$pca, snakemake@output$distance,
-                       snakemake@output$volcano, snakemake@output$heatmap)) {
-        png(plot_out, width=800, height=600, res=150)
-        plot.new(); title("No viral genes detected in count matrix")
-        dev.off()
-    }
-    message("Placeholder outputs created. Pipeline can continue.")
-    sink(type="message"); sink(); close(log)
-    quit(save="no", status=0)
+  message("Viral count matrix is empty (0 genes). Creating placeholder outputs.")
+  empty_df <- data.frame(
+    GeneID = character(), GeneSymbol = character(), GeneBiotype = character(),
+    baseMean = numeric(), log2FoldChange = numeric(), lfcSE = numeric(),
+    stat = numeric(), pvalue = numeric(), padj = numeric())
+  write.table(empty_df, snakemake@output$results, sep = "\t",
+              quote = FALSE, row.names = FALSE)
+  write.table(empty_df, snakemake@output$results_filtered, sep = "\t",
+              quote = FALSE, row.names = FALSE)
+  writeLines(count_lines[1], snakemake@output$normalized_counts)
+  for (p in c(snakemake@output$pca, snakemake@output$distance,
+              snakemake@output$volcano, snakemake@output$heatmap)) {
+    png(p, width = 800, height = 600, res = 150)
+    plot.new(); title("No viral genes detected in count matrix")
+    dev.off()
+  }
+  message("Placeholder outputs created. Pipeline can continue.")
+  teardown_log(log_con)
+  quit(save = "no", status = 0)
 }
 
-counts <- read.table(snakemake@input$counts, header=TRUE, row.names=1, sep="\t", check.names=FALSE)
-metadata <- read.table(snakemake@input$samples, header=TRUE, row.names=1, sep="\t")
-
-# Find common samples between counts and metadata
-common_samples <- intersect(colnames(counts), rownames(metadata))
-
-if (length(common_samples) == 0) {
-    stop("No common samples found between counts matrix and metadata file!")
+# 3. Load data
+dat <- load_common_samples(snakemake@input$counts, snakemake@input$samples)
+if (nrow(dat$counts) < 2) {
+  warning("Very few viral genes detected. DESeq2 analysis may be limited.")
 }
 
-if (length(common_samples) < nrow(metadata)) {
-    warning(paste("Only", length(common_samples), "out of", nrow(metadata), "samples from metadata are present in counts matrix."))
-    warning(paste("Missing samples:", paste(setdiff(rownames(metadata), common_samples), collapse=", ")))
+# 4. Design and config
+cfg <- setup_design(dat$metadata, snakemake@config)
+
+# 5. Pre-filter (more permissive defaults for sparse viral counts)
+counts_filt <- prefilter_counts(dat$counts, snakemake@config,
+                                default_min_count = 5, default_min_samples = 2)
+if (nrow(counts_filt) == 0) {
+  message("All viral genes filtered out. Creating placeholder outputs.")
+  empty_df <- data.frame(
+    GeneID = character(), GeneSymbol = character(), GeneBiotype = character(),
+    baseMean = numeric(), log2FoldChange = numeric(), lfcSE = numeric(),
+    stat = numeric(), pvalue = numeric(), padj = numeric())
+  write.table(empty_df, snakemake@output$results, sep = "\t",
+              quote = FALSE, row.names = FALSE)
+  write.table(empty_df, snakemake@output$results_filtered, sep = "\t",
+              quote = FALSE, row.names = FALSE)
+  writeLines("gene_id", snakemake@output$normalized_counts)
+  for (p in c(snakemake@output$pca, snakemake@output$distance,
+              snakemake@output$volcano, snakemake@output$heatmap)) {
+    png(p, width = 800, height = 600, res = 150)
+    plot.new(); title("No viral genes passed pre-filtering")
+    dev.off()
+  }
+  message("Placeholder outputs created. Pipeline can continue.")
+  teardown_log(log_con)
+  quit(save = "no", status = 0)
 }
 
-# Filter both to only include common samples and ensure same order
-counts <- counts[, common_samples, drop=FALSE]
-metadata <- metadata[common_samples, , drop=FALSE]
-
-# Check if we have enough genes (viral genes are few, so we need at least 2)
-if (nrow(counts) < 2) {
-    warning("Very few viral genes detected. DESeq2 analysis may be limited.")
-}
-
-# 2. Create DESeq2 Dataset
-# Use explicit design formula from config, or auto-detect from metadata columns
-design_str <- snakemake@config[["design_formula"]]
-if (!is.null(design_str) && nchar(design_str) > 0) {
-    design_formula <- as.formula(design_str)
-    for (col in all.vars(design_formula)) {
-        if (col %in% colnames(metadata)) {
-            metadata[[col]] <- factor(metadata[[col]])
-        } else {
-            stop(paste("Design formula references column", col, "not found in metadata"))
-        }
-    }
-} else {
-    # Auto-detect from Control/Condition column
-    if ("Control" %in% colnames(metadata)) {
-        metadata$Control <- factor(metadata$Control)
-        if ("Negative" %in% levels(metadata$Control)) {
-            metadata$Control <- relevel(metadata$Control, ref = "Negative")
-        }
-        design_formula <- ~ Control
-    } else if ("Condition" %in% colnames(metadata)) {
-        metadata$Condition <- factor(metadata$Condition)
-        design_formula <- ~ Condition
-    } else {
-        stop("Metadata must contain either 'Control' or 'Condition' column, or set design_formula in config")
-    }
-}
-
-condition_col <- if ("Condition" %in% colnames(metadata)) "Condition" else "Control"
-padj_threshold <- if (is.null(snakemake@config[["deseq2_padj"]])) 0.05 else as.numeric(snakemake@config[["deseq2_padj"]])
-
-# 3. Pre-filter low-count genes (viral counts are sparse; use permissive defaults)
-min_count <- if (is.null(snakemake@config[["min_count"]])) 5 else as.numeric(snakemake@config[["min_count"]])
-min_samples <- if (is.null(snakemake@config[["min_samples"]])) min(2, ncol(counts)) else as.numeric(snakemake@config[["min_samples"]])
-keep <- rowSums(counts >= min_count) >= min_samples
-message(paste("Pre-filtering: kept", sum(keep), "of", nrow(counts), "viral genes",
-              "(min", min_count, "counts in", min_samples, "samples)"))
-counts <- counts[keep, , drop = FALSE]
-
-# Re-check after filtering
-if (nrow(counts) == 0) {
-    message("All viral genes filtered out. Creating placeholder outputs.")
-    empty_df <- data.frame(GeneID=character(), GeneSymbol=character(), GeneBiotype=character(),
-                           baseMean=numeric(), log2FoldChange=numeric(), lfcSE=numeric(),
-                           stat=numeric(), pvalue=numeric(), padj=numeric())
-    write.table(empty_df, snakemake@output$results, sep="\t", quote=FALSE, row.names=FALSE)
-    write.table(empty_df, snakemake@output$results_filtered, sep="\t", quote=FALSE, row.names=FALSE)
-    writeLines("gene_id", snakemake@output$normalized_counts)
-    for (plot_out in c(snakemake@output$pca, snakemake@output$distance,
-                       snakemake@output$volcano, snakemake@output$heatmap)) {
-        png(plot_out, width=800, height=600, res=150)
-        plot.new(); title("No viral genes passed pre-filtering")
-        dev.off()
-    }
-    message("Placeholder outputs created. Pipeline can continue.")
-    sink(type="message"); sink(); close(log)
-    quit(save="no", status=0)
-}
-
-dds <- DESeqDataSetFromMatrix(countData = round(counts),
-                              colData = metadata,
-                              design = design_formula)
-
-# Viral counts are very sparse (many zeros); default size factor estimation fails.
-# Compute size factors with poscounts, then replace any NA (e.g. zero viral samples) before assigning.
+# 6. Build DESeq2 dataset manually (poscounts size factors needed)
+dds <- DESeqDataSetFromMatrix(countData = round(counts_filt),
+                               colData   = cfg$metadata,
+                               design    = cfg$design_formula)
 cnts <- counts(dds)
 sf <- DESeq2::estimateSizeFactorsForMatrix(cnts, type = "poscounts")
 if (any(is.na(sf))) {
-  message("Some size factors were NA (e.g. zero viral counts); setting them to 1.")
+  message("Some size factors were NA (e.g. zero viral counts); setting to 1.")
   sf[is.na(sf)] <- 1
 }
 sizeFactors(dds) <- sf
 dds <- DESeq(dds)
 
-# 4. Extract Results
-contrast_cfg <- snakemake@config[["deseq2_contrast"]]
-if (!is.null(contrast_cfg) && length(contrast_cfg) == 3) {
-    res <- results(dds, contrast = contrast_cfg)
-} else if ("Control" %in% colnames(metadata) && "Experiment" %in% levels(dds$Control)) {
-    res <- results(dds, contrast = c("Control", "Experiment", "Negative"))
-} else {
-    res <- results(dds)
-}
-
-# Apply Benjamini-Hochberg is done by default in results()
+# 7. Extract results
+res <- extract_results(dds, cfg$metadata, snakemake@config)
 res_df <- as.data.frame(res)
-# Convert row names to a column with proper header
-res_df$GeneID <- rownames(res_df)
-
-# For viral genes, we use the gene ID as the symbol (no Ensembl mapping needed)
+res_df$GeneID     <- rownames(res_df)
 res_df$GeneSymbol <- res_df$GeneID
 res_df$GeneBiotype <- "viral_gene"
 
-# Reorder columns: GeneID, GeneSymbol, GeneBiotype, then statistics
-res_df <- res_df[, c("GeneID", "GeneSymbol", "GeneBiotype", setdiff(colnames(res_df), c("GeneID", "GeneSymbol", "GeneBiotype")))]
-write.table(res_df, snakemake@output$results, sep="\t", quote=FALSE, row.names=FALSE)
+# 8. Write outputs
+write_outputs(res_df, dds, cfg$padj_threshold, snakemake@output)
 
-# Filter and write significant genes
-res_df_significant <- res_df[!is.na(res_df$padj) & res_df$padj < padj_threshold, ]
-message(paste("Found", nrow(res_df_significant), "significantly differentially expressed viral genes (padj <", padj_threshold, ")"))
-write.table(res_df_significant, snakemake@output$results_filtered, sep="\t", quote=FALSE, row.names=FALSE)
-
-# Save normalized counts for downstream analysis
-normalized_counts <- counts(dds, normalized=TRUE)
-normalized_counts_df <- as.data.frame(normalized_counts)
-normalized_counts_df$GeneID <- rownames(normalized_counts_df)
-normalized_counts_df <- normalized_counts_df[, c("GeneID", setdiff(colnames(normalized_counts_df), "GeneID"))]
-write.table(normalized_counts_df, snakemake@output$normalized_counts, sep="\t", quote=FALSE, row.names=FALSE)
-message("Saved normalized counts for viral genes")
-
-# 4. Transformations for Visualization
-# With few sparse viral genes, vst() often fails (needs enough genes with mean count > 5).
-# Use vst if possible, else fall back to log2(normalized + 1) for plots.
+# 9. Transform for visualization (VST with log2 fallback)
 n_genes <- nrow(dds)
-vsd <- tryCatch(vst(dds, blind = FALSE, nsub = min(1000L, n_genes)), error = function(e) NULL)
+vsd <- tryCatch(vst(dds, blind = FALSE, nsub = min(1000L, n_genes)),
+                error = function(e) NULL)
 use_vst <- !is.null(vsd)
 if (!use_vst) {
-  message("VST failed (typical for few viral genes); using log2(normalized counts + 1) for visualizations.")
+  message("VST failed (typical for few viral genes); using log2(norm + 1).")
   norm_counts <- counts(dds, normalized = TRUE)
-  transform_mat <- log2(norm_counts + 1)
-}
-
-# Build a vector of condition labels aligned to sample columns
-sample_names <- if (use_vst) colnames(vsd) else colnames(transform_mat)
-condition_labels <- as.character(metadata[[condition_col]][match(sample_names, rownames(metadata))])
-
-# --- VISUALIZATION 1: PCA Plot ---
-png(snakemake@output$pca, width=1200, height=1000, res=150)
-if (use_vst) {
-  pcaData <- plotPCA(vsd, intgroup = condition_col, returnData = TRUE)
-  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  transform_data <- log2(norm_counts + 1)
 } else {
-  pca <- prcomp(t(transform_mat), center = TRUE, scale. = FALSE)
-  percentVar <- round(100 * summary(pca)$importance[2, 1:2])
-  pcaData <- setNames(data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2], condition_labels), c("PC1", "PC2", condition_col))
+  transform_data <- vsd
 }
-ggplot(pcaData, aes(PC1, PC2, color = .data[[condition_col]])) +
-  geom_point(size = 4, alpha = 0.8) +
-  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
-  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
-  theme_minimal() +
-  ggtitle("PCA: Sample Clustering (Viral Genes)")
-dev.off()
 
-# --- VISUALIZATION 2: Sample Distance Matrix ---
-if (use_vst) {
-  sampleDists <- dist(t(assay(vsd)))
-} else {
-  sampleDists <- dist(t(transform_mat))
-}
-sampleDistMatrix <- as.matrix(sampleDists)
-display_labels <- paste0(condition_labels, "_", seq_along(condition_labels))
-rownames(sampleDistMatrix) <- display_labels
-colnames(sampleDistMatrix) <- display_labels
-png(snakemake@output$distance, width = 1200, height = 1000, res = 150)
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows = sampleDists,
-         clustering_distance_cols = sampleDists,
-         main = "Sample-to-Sample Distances (Viral Genes)")
-dev.off()
-
-# --- VISUALIZATION 3: Volcano Plot ---
-png(snakemake@output$volcano, width=1200, height=1200, res=150)
-# Use gene IDs for labels (viral genes don't have symbols)
-res_df$gene_label <- res_df$GeneID
-ggplot(res_df, aes(x=log2FoldChange, y=-log10(padj))) +
-    geom_point(aes(color = padj < padj_threshold), alpha=0.6, size=3) +
-    theme_minimal() +
-    scale_color_manual(values = c("grey", "red")) +
-    geom_text_repel(data=subset(res_df, !is.na(padj) & padj < padj_threshold), aes(label=gene_label), size=4) +
-    labs(title="Differential Expression Volcano Plot (Viral Genes)", 
-         subtitle=paste0("Red: Adjusted P-Value < ", padj_threshold),
-         x="log2 Fold Change",
-         y="-log10 Adjusted P-value")
-dev.off()
-
-# --- VISUALIZATION 4: Significant DE Genes Heatmap ---
-# Use all genes with padj < 0.05
-significant_genes_idx <- which(!is.na(res$padj) & res$padj < padj_threshold)
-
-# Adjust height based on number of genes (minimum 800, add 30 pixels per gene)
-n_sig_genes <- length(significant_genes_idx)
-heatmap_height <- max(800, 200 + n_sig_genes * 30)
-
-# Use same transform as for PCA/distance (vst or log2)
-heatmap_transform <- if (use_vst) assay(vsd) else transform_mat
-
-png(snakemake@output$heatmap, width = 1200, height = heatmap_height, res = 150)
-if (n_sig_genes == 0) {
-    message(paste0("No viral genes with padj < ", padj_threshold, "; skipping heatmap."))
-    plot.new()
-    title(paste0("No significantly differentially expressed viral genes (padj < ", padj_threshold, ")"))
-} else {
-    heatmap_mat <- heatmap_transform[significant_genes_idx, , drop = FALSE]
-    # Use gene IDs for row names (already set)
-    # Build unique display labels that still show Condition
-    display_labels <- paste0(condition_labels, "_", seq_along(condition_labels))
-    colnames(heatmap_mat) <- display_labels
-    # Build annotation data frame whose rownames match the heatmap columns
-    ann_col <- setNames(data.frame(condition_labels), condition_col)
-    rownames(ann_col) <- display_labels
-    # hclust needs at least 2 objects; disable clustering when only 1 row or 1 column
-    cluster_rows <- n_sig_genes >= 2
-    cluster_cols <- ncol(heatmap_mat) >= 2
-    pheatmap(heatmap_mat,
-             cluster_rows = cluster_rows,
-             show_rownames = TRUE,
-             cluster_cols = cluster_cols,
-             annotation_col = ann_col,
-             fontsize_row = 10,
-             main = paste0("Significantly Differentially Expressed Viral Genes (padj < ", padj_threshold, ", n = ", n_sig_genes, ")"))
-}
-dev.off()
+# 10. Visualizations
+make_visualizations(transform_data, res_df, res, cfg$metadata,
+                     cfg$condition_col, cfg$padj_threshold,
+                     gene_label_col = "GeneID",
+                     output = snakemake@output,
+                     title_text = " (Viral Genes)",
+                     use_vst = use_vst,
+                     label_threshold = cfg$padj_threshold,
+                     volcano_alpha = 0.6)
 
 message("Viral gene DESeq2 analysis completed successfully")
 
-sink(type="message")
-sink()
-close(log)
+# 11. Teardown
+teardown_log(log_con)

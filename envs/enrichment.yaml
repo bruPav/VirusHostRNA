@@ -8,9 +8,9 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - r-base=4.4
-  - r-biocmanager
-  - r-ggplot2
+  - r-base=4.4.0
+  - r-biocmanager=1.30.23
+  - r-ggplot2=3.5.1
   # clusterProfiler + human annotation (conda pulls in DOSE, enrichplot, etc.)
-  - bioconductor-clusterprofiler
-  - bioconductor-org.hs.eg.db
+  - bioconductor-clusterprofiler=4.12.6
+  - bioconductor-org.hs.eg.db=3.19.1

@@ -1,0 +1,34 @@
+# Data directories — mount at runtime, do not embed in image
+rawdata/
+trimmed/
+fastqc/
+multiqc/
+aligned/
+star_index/
+counts/
+results/
+rseqc/
+refs/
+logs/
+
+# Git
+.git/
+.gitignore
+
+# Reference genome files (large — download or mount at runtime)
+*.fa
+*.fna
+*.fa.gz
+*.fna.gz
+*.gtf
+*.gtf.gz
+!envs/*.yaml
+
+# Snakemake state
+.snakemake/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*~
