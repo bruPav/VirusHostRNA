@@ -248,6 +248,8 @@ def _rule_all_inputs():
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png")
     # Summary report
     ins.append(f"{RESULTS_DIR}/report.html")
+    # Version log
+    ins.append(f"{RESULTS_DIR}/versions.txt")
     return ins
 
 rule all:
@@ -827,11 +829,13 @@ rule enrichment_analysis:
         f"{LOGS_DIR}/enrichment.log"
     conda: "envs/enrichment.yaml"
     params:
-        pvalue = config.get("enrichment_pvalue", 0.2),
-        qvalue = config.get("enrichment_qvalue", 0.2),
-        organism = config.get("kegg_organism", "hsa")
+        pvalue   = config.get("enrichment_pvalue", 0.2),
+        qvalue   = config.get("enrichment_qvalue", 0.2),
+        organism = config.get("kegg_organism", "hsa"),
+        org_db   = config.get("org_db", "org.Hs.eg.db"),
+        id_type  = config.get("gene_id_type", "ENSEMBL")
     shell:
-        "Rscript scripts/enrichment_analysis_standalone.R {params.pvalue} {params.qvalue} {params.organism} > {log} 2>&1"
+        "Rscript scripts/enrichment_analysis_standalone.R {params.pvalue} {params.qvalue} {params.organism} {params.org_db} {params.id_type} > {log} 2>&1"
 
 # =============================================================================
 # Summary HTML report
@@ -872,7 +876,9 @@ rule generate_report:
         count_viral   = f"{COUNTS_DIR}/gene_counts_matrix_viral.tsv",
         # QC
         multiqc       = f"{MULTIQC_DIR}/multiqc_report.html",
-        strandedness  = f"{RSEQC_DIR}/strandedness_summary.tsv"
+        strandedness  = f"{RSEQC_DIR}/strandedness_summary.tsv",
+        # Versions
+        versions      = f"{RESULTS_DIR}/versions.txt"
     output:
         report = f"{RESULTS_DIR}/report.html"
     log:
@@ -880,6 +886,56 @@ rule generate_report:
     conda: "envs/ge_analysis.yaml"
     script:
         "scripts/generate_report.R"
+
+# =============================================================================
+# Version log for publication reproducibility
+# =============================================================================
+rule version_log:
+    """Write tool and package versions to results/versions.txt."""
+    output:
+        f"{RESULTS_DIR}/versions.txt"
+    log:
+        f"{LOGS_DIR}/versions.log"
+    conda: "envs/ge_analysis.yaml"
+    shell:
+        r"""
+        echo "VirusHostRNA — Tool Versions" > {output}
+        echo "=============================" >> {output}
+        echo "" >> {output}
+        echo "--- Core Tools ---" >> {output}
+        echo "STAR:"    $$(STAR --version 2>&1 | head -1) >> {output}
+        echo "fastp:"   $$(fastp --version 2>&1 | head -1) >> {output}
+        echo "samtools:" $$(samtools --version 2>&1 | head -1) >> {output}
+        echo "fastqc:"  $$(fastqc --version 2>&1)            >> {output}
+        echo "multiqc:" $$(multiqc --version 2>&1)          >> {output}
+        echo "Python:"  $$(python --version 2>&1)           >> {output}
+        echo "R:"       $$(R --version 2>&1 | head -1)      >> {output}
+        echo "" >> {output}
+        echo "--- R Packages ---" >> {output}
+        Rscript -e 'cat("DESeq2:", as.character(packageVersion("DESeq2")), "\n")' >> {output}
+        Rscript -e 'cat("clusterProfiler:", as.character(packageVersion("clusterProfiler")), "\n")' >> {output}
+        Rscript -e 'cat("ggplot2:", as.character(packageVersion("ggplot2")), "\n")' >> {output}
+        Rscript -e 'cat("biomaRt:", as.character(packageVersion("biomaRt")), "\n")' >> {output}
+        Rscript -e 'cat("pheatmap:", as.character(packageVersion("pheatmap")), "\n")' >> {output}
+        Rscript -e 'cat("ggrepel:", as.character(packageVersion("ggrepel")), "\n")' >> {output}
+        echo "" >> {output}
+        echo "--- Pipeline ---" >> {output}
+        echo "Snakemake:" $$(snakemake --version 2>&1) >> {output}
+        echo "" >> {output}
+        echo "Generated:" $$(date) >> {output}
+        """ 2> {log}
+
+# =============================================================================
+# Convenience: mark alignments as complete without re-running STAR
+# Run manually: snakemake touch_complete --cores 1
+# =============================================================================
+rule touch_complete:
+    """Skip re-alignment — mark existing BAMs and counts as up-to-date."""
+    output:
+        touch(expand(f"{ALIGN_DIR}/{{sample}}_Aligned.sortedByCoord.out.bam", sample=SAMPLES)),
+        touch(expand(f"{ALIGN_DIR}/{{sample}}_ReadsPerGene.out.tab", sample=SAMPLES))
+    shell:
+        "echo 'BAMs and gene counts marked as complete.'"
 
 # =============================================================================
 # HiPathia pathway analysis (commented out – enable if needed)

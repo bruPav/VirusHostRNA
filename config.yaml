@@ -131,3 +131,7 @@ kegg_organism: "hsa"
 # p-value / q-value cutoffs for ORA and GSEA
 enrichment_pvalue: 0.2
 enrichment_qvalue: 0.2
+# Bioconductor OrgDb package for gene annotation (e.g. org.Hs.eg.db, org.Mm.eg.db)
+org_db: "org.Hs.eg.db"
+# ID type used in the count matrix gene IDs (ENSEMBL, ENTREZID, SYMBOL, etc.)
+gene_id_type: "ENSEMBL"

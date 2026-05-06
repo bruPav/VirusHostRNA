@@ -201,6 +201,8 @@ min_samples: 3              # in at least N samples
 enrichment_pvalue: 0.2       # p-value cutoff for ORA and GSEA
 enrichment_qvalue: 0.2       # q-value cutoff for ORA and GSEA
 kegg_organism: "hsa"         # KEGG organism code
+org_db: "org.Hs.eg.db"       # Bioconductor OrgDb package
+gene_id_type: "ENSEMBL"      # ID type in count matrix
 
 # Pathogen chromosome prefixes for viral gene identification.
 pathogen_gene_prefixes: ["NC_075498"]
@@ -258,6 +260,8 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 | `deseq2_analysis_viral` | DESeq2 on viral-only counts (sparse-data-safe) |
 | `enrichment_analysis` | clusterProfiler ORA + GSEA (GO BP, KEGG) on human DE genes |
 | `generate_report` | HTML summary report linking to all results and plots |
+| `version_log` | Write tool and package versions to results/versions.txt |
+| `touch_complete` | (Manual) Mark BAMs as complete — skip re-alignment |
 
 ### Key output files
 
@@ -272,6 +276,7 @@ FASTQ --> fastp (trimming) --> FastQC --> MultiQC
 | `results/distance_matrix_human.png` | Sample distance matrix (human) |
 | `results/enrichment/` | GO/KEGG ORA and GSEA tables + dot plots |
 | `results/report.html` | HTML summary report — links to all plots, tables, and MultiQC |
+| `results/versions.txt` | Tool and package versions for publication methods |
 | `results/deg_results_viral.tsv` | DESeq2 results for pathogen genes |
 | `results/deg_results.tsv` | DESeq2 results for combined counts |
 | `counts/gene_counts_matrix.tsv` | Combined count matrix |
@@ -407,6 +412,15 @@ The report uses relative paths to images. Keep `report.html` inside `results/`
 alongside the PNG files. If you move the report, copy the whole `results/`
 directory with it.
 
+**Re-running after alignment is done (skip STAR):**
+Run `snakemake touch_complete --cores 1` first, then `snakemake --use-conda --cores N`.
+All alignment steps will be skipped while downstream steps still run.
+
+**Using a non-human organism for enrichment:**
+Set `org_db` (e.g. `org.Mm.eg.db` for mouse) and `gene_id_type` in config.
+The pipeline auto-installs the specified OrgDb package if missing.
+You may also need to add the package to `envs/enrichment.yaml` for the conda env.
+
 **Snakemake reports "incomplete files" after an interrupted run:**
 Remove the marker files: `rm .snakemake/incomplete/*` and re-run.
 
@@ -448,6 +462,7 @@ VirusHostRNA/
 ├── counts/                   # Gene count matrices (auto-generated)
 ├── results/                  # DESeq2 + enrichment output (auto-generated)
 │   ├── report.html           # Summary HTML report
+│   ├── versions.txt          # Tool versions for publications
 │   └── enrichment/           # GO/KEGG ORA + GSEA tables and plots
 ├── rseqc/                    # Strandedness reports (auto-generated)
 ├── refs/                     # BED file for RSeQC (auto-generated)

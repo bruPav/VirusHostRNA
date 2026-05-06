@@ -26,6 +26,8 @@ args <- commandArgs(trailingOnly = TRUE)
 enrich_pvalue  <- if (length(args) >= 1) as.numeric(args[1]) else 0.2
 enrich_qvalue  <- if (length(args) >= 2) as.numeric(args[2]) else 0.2
 kegg_organism  <- if (length(args) >= 3) args[3] else "hsa"
+org_db_pkg     <- if (length(args) >= 4) args[4] else "org.Hs.eg.db"
+gene_id_type   <- if (length(args) >= 5) args[5] else "ENSEMBL"
 
 project_dir <- find_project_root()
 
@@ -38,30 +40,44 @@ message("Enrichment analysis (ORA + GSEA). First run may take 1–2 min (KEGG/GO
 # Load packages (install if missing; enrichplot optional - script works without it)
 if (!requireNamespace("clusterProfiler", quietly = TRUE)) {
   if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
-  BiocManager::install(c("clusterProfiler", "org.Hs.eg.db"), update = FALSE, ask = FALSE)
+  BiocManager::install("clusterProfiler", update = FALSE, ask = FALSE)
 }
 library(clusterProfiler)
-library(org.Hs.eg.db)
+
+# Load the configured OrgDb package (auto-install if not available)
+if (!requireNamespace(org_db_pkg, quietly = TRUE)) {
+  message(paste("Installing", org_db_pkg, "via BiocManager..."))
+  if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+  BiocManager::install(org_db_pkg, update = FALSE, ask = FALSE)
+}
+library(org_db_pkg, character.only = TRUE)
+org_db <- get(org_db_pkg)
+
 library(ggplot2)
 has_enrichplot <- requireNamespace("enrichplot", quietly = TRUE)
 if (has_enrichplot) library(enrichplot)
 
+message(paste("Using", org_db_pkg, "for gene annotation (ID type:", gene_id_type, ")"))
+
 message("Loading DESeq2 results...")
 res <- read.table(deseq2_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-# Strip Ensembl version for mapping
-res$Ensembl <- sub("\\.[0-9]+$", "", res$GeneID)
+# Strip Ensembl version if applicable
+if (gene_id_type == "ENSEMBL") {
+  res$ID <- sub("\\.[0-9]+$", "", res$GeneID)
+} else {
+  res$ID <- res$GeneID
+}
 
-# Map Ensembl -> Entrez for KEGG/GO (org.Hs.eg.db)
-# Many IDs "fail to map" by design: lncRNAs, pseudogenes, and some genes are not in the DB.
-# KEGG/GO enrichment uses the successfully mapped set; this is standard.
-message("Mapping Ensembl to Entrez IDs (unmapped: often lncRNA/pseudogenes or not in DB)...")
-id_map <- suppressWarnings(bitr(unique(res$Ensembl), fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db))
-# If 1:many Ensembl->Entrez, keep first Entrez per Ensembl
-id_map <- id_map[!duplicated(id_map$ENSEMBL), ]
-res$Entrez <- id_map$ENTREZID[match(res$Ensembl, id_map$ENSEMBL)]
+# Map gene IDs to Entrez for KEGG/GO
+message(paste("Mapping", gene_id_type, "to Entrez IDs (unmapped: often non-coding genes or not in DB)..."))
+id_map <- suppressWarnings(bitr(unique(res$ID), fromType = gene_id_type, toType = "ENTREZID", OrgDb = org_db))
+# Keep first Entrez per source ID if multiple mappings
+id_map <- id_map[!duplicated(id_map[[gene_id_type]]), ]
+res$Entrez <- id_map$ENTREZID[match(res$ID, id_map[[gene_id_type]])]
 n_mapped <- sum(!is.na(res$Entrez))
-n_total  <- length(unique(res$Ensembl))
-message(paste("  Mapped", n_mapped, "of", n_total, "unique Ensembl IDs to Entrez (", round(100 * n_mapped / n_total, 1), "%).", sep = ""))
+n_total  <- length(unique(res$ID))
+message(paste("  Mapped", n_mapped, "of", n_total, "unique", gene_id_type, "IDs to Entrez (",
+              round(100 * n_mapped / max(1, n_total), 1), "%).", sep = ""))
 res <- res[!is.na(res$Entrez) & !duplicated(res$Entrez), ]
 
 # Remove genes with NA stats (for ranking)
@@ -112,7 +128,7 @@ if (length(de_entrez) >= 5) {
   }
   message("Running GO BP over-representation...")
   ora_go <- tryCatch({
-    enrichGO(gene = de_entrez, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, qvalueCutoff = enrich_qvalue)
+    enrichGO(gene = de_entrez, OrgDb = org_db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, qvalueCutoff = enrich_qvalue)
   }, error = function(e) { message("enrichGO: ", e$message); NULL })
   if (!is.null(ora_go) && nrow(ora_go@result) > 0) {
     write.table(ora_go@result, file.path(out_dir, "enrich_GOBP_ORA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
@@ -187,7 +203,7 @@ if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
 
 message("Running GO BP GSEA...")
 gsea_go <- tryCatch({
-  gseGO(geneList = gene_list, OrgDb = org.Hs.eg.db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, pAdjustMethod = "BH")
+  gseGO(geneList = gene_list, OrgDb = org_db, ont = "BP", keyType = "ENTREZID", pvalueCutoff = enrich_pvalue, pAdjustMethod = "BH")
 }, error = function(e) { message("gseGO: ", e$message); NULL })
 if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
   write.table(gsea_go@result, file.path(out_dir, "enrich_GOBP_GSEA.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)

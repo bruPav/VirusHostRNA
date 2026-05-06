@@ -150,6 +150,8 @@ html <- c(
             file_link(snakemake@input$strandedness, "strandedness_summary.tsv")),
     sprintf("<tr><td>%s</td><td>MultiQC report</td></tr>",
             file_link(snakemake@input$multiqc, "multiqc_report.html")),
+    sprintf("<tr><td>%s</td><td>Tool &amp; package versions (for publications)</td></tr>",
+            file_link(snakemake@input$versions, "versions.txt")),
     "</table>"
   ),
 
