@@ -246,6 +246,10 @@ def _rule_all_inputs():
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA.tsv")
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_KEGG_ORA_dotplot.png")
     ins.append(f"{RESULTS_DIR}/enrichment/enrich_GOBP_ORA_dotplot.png")
+    # HiPathia pathway analysis
+    ins.append(f"{RESULTS_DIR}/hipathia_pathway_activity.tsv")
+    ins.append(f"{RESULTS_DIR}/hipathia_pathway_heatmap.png")
+    ins.append(f"{RESULTS_DIR}/hipathia_report/index.html")
     # Summary report
     ins.append(f"{RESULTS_DIR}/report.html")
     # Version log
@@ -938,17 +942,18 @@ rule touch_complete:
         "echo 'BAMs and gene counts marked as complete.'"
 
 # =============================================================================
-# HiPathia pathway analysis (commented out – enable if needed)
+# HiPathia pathway analysis
 # =============================================================================
-#rule hipathia_analysis:
-#    input:
-#        samples = SAMPLES_TSV
-#    output:
-#        pathway_activity = f"{RESULTS_DIR}/hipathia_pathway_activity.tsv",
-#        pathway_heatmap  = f"{RESULTS_DIR}/hipathia_pathway_heatmap.png",
-#        report_html      = f"{RESULTS_DIR}/hipathia_report/index.html"
-#    log:
-#        f"{LOGS_DIR}/hipathia.log"
-#    conda: "envs/hipathia.yaml"
-#    script:
-#        "scripts/hipathia_analysis.R"
+rule hipathia_analysis:
+    input:
+        normalized_counts = f"{RESULTS_DIR}/normalized_counts_human.tsv",
+        samples = SAMPLES_TSV
+    output:
+        pathway_activity = f"{RESULTS_DIR}/hipathia_pathway_activity.tsv",
+        pathway_heatmap  = f"{RESULTS_DIR}/hipathia_pathway_heatmap.png",
+        report_html      = f"{RESULTS_DIR}/hipathia_report/index.html"
+    log:
+        f"{LOGS_DIR}/hipathia.log"
+    conda: "envs/hipathia.yaml"
+    script:
+        "scripts/hipathia_analysis.R"
